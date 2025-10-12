@@ -1,0 +1,150 @@
+// Main persistence layer exports
+// Provides a single entry point for all persistence-related functionality
+
+// Core types
+export * from './types.js';
+
+// Database and transactions
+export * from './database.js';
+export * from './transactions.js';
+
+// Base repository
+export * from './BaseRepository.js';
+
+// Repositories
+export * from './repositories/index.js';
+
+// Adapters
+export * from './adapters/index.js';
+
+// Query helpers
+export * from './queries/index.js';
+
+// Document manager
+export * from './DocumentManager.js';
+
+// Session manager
+export * from './SessionManager.js';
+
+// Factory functions for easy setup
+import { openDatabase } from './database.js';
+import { createPersistenceAdapter } from './adapters/index.js';
+import { createRepositories } from './repositories/index.js';
+import { createProvenanceQueries } from './queries/index.js';
+import { createDocumentManager } from './DocumentManager.js';
+import type { IPersistenceAdapter } from './adapters/IPersistenceAdapter.js';
+import type { RepositoryCollection } from './repositories/index.js';
+import type { DocumentManagerConfig } from './DocumentManager.js';
+
+/**
+ * Complete persistence layer setup
+ */
+export interface PersistenceLayer {
+  adapter: IPersistenceAdapter;
+  repositories: RepositoryCollection;
+  provenanceQueries: any;
+  documentManager: any;
+  close: () => Promise<void>;
+}
+
+/**
+ * Initialize the complete persistence layer
+ */
+export async function initializePersistenceLayer(
+  documentManagerConfig?: DocumentManagerConfig
+): Promise<PersistenceLayer> {
+  // Open database
+  const db = await openDatabase();
+  
+  // Create adapter
+  const adapter = createPersistenceAdapter('indexeddb', { database: db });
+  await adapter.initialize();
+  
+  // Create repositories
+  const repositories = createRepositories(db);
+  
+  // Create query helpers
+  const provenanceQueries = createProvenanceQueries(repositories);
+  
+  // Create document manager
+  const documentManager = createDocumentManager(adapter, documentManagerConfig);
+  
+  return {
+    adapter,
+    repositories,
+    provenanceQueries,
+    documentManager,
+    close: async () => {
+      documentManager.dispose();
+      await adapter.close();
+      db.close();
+    }
+  };
+}
+
+/**
+ * Feature flag for persistence layer
+ */
+export const PERSISTENCE_FEATURE_FLAGS = {
+  USE_PERSISTENCE_ADAPTER: false,
+  ENABLE_AUTO_DECOMPOSITION: true,
+  ENABLE_AUTO_SAVE: true,
+  ENABLE_PROVENANCE_TRACKING: true,
+  ENABLE_GHOST_RAIL: true
+} as const;
+
+/**
+ * Check if persistence layer is available
+ */
+export function isPersistenceAvailable(): boolean {
+  return typeof indexedDB !== 'undefined' && 
+         typeof IDBDatabase !== 'undefined';
+}
+
+/**
+ * Get persistence layer health status
+ */
+export async function getPersistenceHealth(): Promise<{
+  available: boolean;
+  adapterReady: boolean;
+  databaseOpen: boolean;
+  error?: string;
+}> {
+  try {
+    const available = isPersistenceAvailable();
+    if (!available) {
+      return {
+        available: false,
+        adapterReady: false,
+        databaseOpen: false,
+        error: 'IndexedDB not available'
+      };
+    }
+
+    // Try to open database
+    const db = await openDatabase();
+    const databaseOpen = db.readyState === 'done';
+    
+    // Create adapter and check readiness
+    const adapter = createPersistenceAdapter('indexeddb', { database: db });
+    await adapter.initialize();
+    const adapterReady = await adapter.isReady();
+    
+    // Cleanup
+    await adapter.close();
+    db.close();
+    
+    return {
+      available: true,
+      adapterReady,
+      databaseOpen,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      adapterReady: false,
+      databaseOpen: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}

@@ -1,0 +1,244 @@
+// Turns Repository - Manages turn records in conversations
+
+import { BaseRepository } from '../BaseRepository.js';
+import { TurnRecord } from '../types.js';
+
+export class TurnsRepository extends BaseRepository<TurnRecord> {
+  constructor(db: IDBDatabase) {
+    super(db, 'Turns');
+  }
+
+  /**
+   * Get turns by thread ID
+   */
+  async getByThreadId(threadId: string): Promise<TurnRecord[]> {
+    const turns = await this.getByIndex('threadId', threadId);
+    return turns.sort((a, b) => a.sequence - b.sequence);
+  }
+
+  /**
+   * Get turns by session ID
+   */
+  async getBySessionId(sessionId: string): Promise<TurnRecord[]> {
+    return this.getByIndex('sessionId', sessionId);
+  }
+
+  /**
+   * Get turns by user ID
+   */
+  async getByUserId(userId: string): Promise<TurnRecord[]> {
+    return this.getByIndex('userId', userId);
+  }
+
+  /**
+   * Get turns by role (user/assistant)
+   */
+  async getByRole(role: 'user' | 'assistant'): Promise<TurnRecord[]> {
+    return this.getByIndex('role', role);
+  }
+
+  /**
+   * Get turns created within a date range
+   */
+  async getByDateRange(startDate: Date, endDate: Date): Promise<TurnRecord[]> {
+    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
+    return this.getByIndex('createdAt', range);
+  }
+
+  /**
+   * Get the latest turn in a thread
+   */
+  async getLatestByThreadId(threadId: string): Promise<TurnRecord | null> {
+    const turns = await this.getByThreadId(threadId);
+    return turns.length > 0 ? turns[turns.length - 1] : null;
+  }
+
+  /**
+   * Get turns with pagination for a thread
+   */
+  async getByThreadIdPaginated(
+    threadId: string,
+    offset: number = 0,
+    limit: number = 50
+  ): Promise<{ turns: TurnRecord[]; hasMore: boolean }> {
+    return this.getPaginated('threadId', threadId, offset, limit);
+  }
+
+  /**
+   * Get next sequence number for a thread
+   */
+  async getNextSequence(threadId: string): Promise<number> {
+    const turns = await this.getByThreadId(threadId);
+    return turns.length > 0 ? Math.max(...turns.map(t => t.sequence)) + 1 : 1;
+  }
+
+  /**
+   * Search turns by content
+   */
+  async searchByContent(query: string, threadId?: string): Promise<TurnRecord[]> {
+    const searchQuery = query.toLowerCase();
+    let turns: TurnRecord[];
+
+    if (threadId) {
+      turns = await this.getByThreadId(threadId);
+    } else {
+      turns = await this.getAll();
+    }
+
+    return turns.filter(turn => 
+      turn.content.toLowerCase().includes(searchQuery)
+    );
+  }
+
+  /**
+   * Get conversation context (recent turns) for a thread
+   */
+  async getConversationContext(
+    threadId: string, 
+    maxTurns: number = 10
+  ): Promise<TurnRecord[]> {
+    const turns = await this.getByThreadId(threadId);
+    return turns.slice(-maxTurns);
+  }
+
+  /**
+   * Get turn statistics for a thread
+   */
+  async getThreadTurnStats(threadId: string): Promise<{
+    total: number;
+    userTurns: number;
+    assistantTurns: number;
+    averageLength: number;
+    totalLength: number;
+  }> {
+    const turns = await this.getByThreadId(threadId);
+    
+    const stats = {
+      total: turns.length,
+      userTurns: turns.filter(t => t.role === 'user').length,
+      assistantTurns: turns.filter(t => t.role === 'assistant').length,
+      averageLength: 0,
+      totalLength: 0
+    };
+
+    stats.totalLength = turns.reduce((sum, turn) => sum + turn.content.length, 0);
+    stats.averageLength = stats.total > 0 ? stats.totalLength / stats.total : 0;
+
+    return stats;
+  }
+
+  /**
+   * Get user activity statistics
+   */
+  async getUserActivityStats(userId: string): Promise<{
+    totalTurns: number;
+    turnsToday: number;
+    turnsThisWeek: number;
+    averageTurnsPerDay: number;
+    mostActiveThread: string | null;
+  }> {
+    const turns = await this.getByUserId(userId);
+    
+    const now = Date.now();
+    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+    const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000);
+
+    const turnsToday = turns.filter(t => t.createdAt >= oneDayAgo).length;
+    const turnsThisWeek = turns.filter(t => t.createdAt >= oneWeekAgo).length;
+
+    // Find most active thread
+    const threadCounts: Record<string, number> = {};
+    turns.forEach(turn => {
+      threadCounts[turn.threadId] = (threadCounts[turn.threadId] || 0) + 1;
+    });
+
+    const mostActiveThread = Object.keys(threadCounts).reduce((a, b) => 
+      threadCounts[a] > threadCounts[b] ? a : b, 
+      Object.keys(threadCounts)[0] || null
+    );
+
+    return {
+      totalTurns: turns.length,
+      turnsToday,
+      turnsThisWeek,
+      averageTurnsPerDay: turnsThisWeek / 7,
+      mostActiveThread
+    };
+  }
+
+  /**
+   * Update turn content
+   */
+  async updateContent(turnId: string, content: string): Promise<void> {
+    const turn = await this.get(turnId);
+    if (turn) {
+      turn.content = content;
+      turn.updatedAt = Date.now();
+      await this.put(turn);
+    }
+  }
+
+  /**
+   * Delete turns older than specified date for a thread
+   */
+  async deleteOldTurns(threadId: string, olderThanDate: Date): Promise<number> {
+    const turns = await this.getByThreadId(threadId);
+    const toDelete = turns.filter(turn => turn.createdAt < olderThanDate.getTime());
+    
+    if (toDelete.length > 0) {
+      const ids = toDelete.map(turn => turn.id);
+      await this.deleteMany(ids);
+    }
+
+    return toDelete.length;
+  }
+
+  /**
+   * Get turns by provider responses (turns that have provider responses)
+   */
+  async getTurnsWithProviderResponses(): Promise<TurnRecord[]> {
+    const allTurns = await this.getAll();
+    return allTurns.filter(turn => 
+      turn.providerResponseIds && turn.providerResponseIds.length > 0
+    );
+  }
+
+  /**
+   * Get conversation flow for a thread (alternating user/assistant pattern)
+   */
+  async getConversationFlow(threadId: string): Promise<{
+    turns: TurnRecord[];
+    isValidFlow: boolean;
+    issues: string[];
+  }> {
+    const turns = await this.getByThreadId(threadId);
+    const issues: string[] = [];
+    
+    // Check for proper alternating pattern
+    let expectedRole: 'user' | 'assistant' = 'user';
+    let isValidFlow = true;
+
+    for (let i = 0; i < turns.length; i++) {
+      const turn = turns[i];
+      
+      if (turn.role !== expectedRole) {
+        isValidFlow = false;
+        issues.push(`Turn ${i + 1}: Expected ${expectedRole}, got ${turn.role}`);
+      }
+      
+      // Check sequence numbers
+      if (turn.sequence !== i + 1) {
+        isValidFlow = false;
+        issues.push(`Turn ${i + 1}: Sequence mismatch (expected ${i + 1}, got ${turn.sequence})`);
+      }
+      
+      expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
+    }
+
+    return {
+      turns,
+      isValidFlow,
+      issues
+    };
+  }
+}

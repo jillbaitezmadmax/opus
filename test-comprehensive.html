@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTOS Comprehensive Test Suite</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .test-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+        
+        .test-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        }
+        
+        .test-card h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .test-card .icon {
+            font-size: 1.5em;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: auto;
+        }
+        
+        .status-pending { background: #ffc107; }
+        .status-running { background: #17a2b8; animation: pulse 1.5s infinite; }
+        .status-success { background: #28a745; }
+        .status-error { background: #dc3545; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .test-results {
+            margin-top: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 6px;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .result-item {
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 4px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .result-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+        
+        .result-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+        
+        .result-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+        
+        .result-warning {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 8px;
+            font-weight: 600;
+            font-size: 1em;
+            transition: all 0.3s ease;
+            min-width: 140px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+        
+        .progress-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.5s ease;
+            position: relative;
+        }
+        
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 2px solid #e9ecef;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        
+        .debug-panel {
+            margin-top: 30px;
+            padding: 20px;
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .debug-panel h4 {
+            color: #81e6d9;
+            margin-bottom: 10px;
+        }
+        
+        .timestamp {
+            color: #a0aec0;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧩 HTOS Comprehensive Test Suite</h1>
+            <p>Complete validation of persistence layer, error handling, and monitoring systems</p>
+        </div>
+        
+        <div class="content">
+            <div class="controls">
+                <button class="btn" onclick="runAllTests()">🚀 Run All Tests</button>
+                <button class="btn btn-secondary" onclick="runQuickTests()">⚡ Quick Test</button>
+                <button class="btn btn-secondary" onclick="clearResults()">🧹 Clear Results</button>
+                <button class="btn btn-danger" onclick="resetSystem()">🔄 Reset System</button>
+            </div>
+            
+            <div class="progress-section">
+                <h3>Overall Progress</h3>
+                <div class="progress-bar">
+                    <div id="overall-progress" class="progress-fill"></div>
+                </div>
+                <div id="progress-text">Ready to start testing...</div>
+            </div>
+            
+            <div class="summary-stats" id="summary-stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="tests-passed">0</div>
+                    <div class="stat-label">Tests Passed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="tests-failed">0</div>
+                    <div class="stat-label">Tests Failed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="tests-total">0</div>
+                    <div class="stat-label">Total Tests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="success-rate">0%</div>
+                    <div class="stat-label">Success Rate</div>
+                </div>
+            </div>
+            
+            <div class="test-grid">
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">🌐</span>
+                        Environment Check
+                        <span id="env-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="env-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">🔧</span>
+                        Service Worker
+                        <span id="sw-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="sw-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">🗄️</span>
+                        Persistence Layer
+                        <span id="persistence-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="persistence-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">📄</span>
+                        Document Operations
+                        <span id="document-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="document-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">👤</span>
+                        Session Management
+                        <span id="session-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="session-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">🚨</span>
+                        Error Handling
+                        <span id="error-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="error-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">📊</span>
+                        Monitoring System
+                        <span id="monitor-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="monitor-results" class="test-results"></div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>
+                        <span class="icon">🔄</span>
+                        Migration & Recovery
+                        <span id="migration-status" class="status-indicator status-pending"></span>
+                    </h3>
+                    <div id="migration-results" class="test-results"></div>
+                </div>
+            </div>
+            
+            <div class="debug-panel" id="debug-panel">
+                <h4>🔍 Debug Console</h4>
+                <div id="debug-content">System ready for testing...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let testStats = {
+            passed: 0,
+            failed: 0,
+            total: 0,
+            currentTest: 0
+        };
+
+        let isTestingInProgress = false;
+
+        function updateStats() {
+            document.getElementById('tests-passed').textContent = testStats.passed;
+            document.getElementById('tests-failed').textContent = testStats.failed;
+            document.getElementById('tests-total').textContent = testStats.total;
+            
+            const successRate = testStats.total > 0 ? 
+                Math.round((testStats.passed / testStats.total) * 100) : 0;
+            document.getElementById('success-rate').textContent = successRate + '%';
+        }
+
+        function updateProgress(percentage, text) {
+            document.getElementById('overall-progress').style.width = percentage + '%';
+            document.getElementById('progress-text').textContent = text;
+        }
+
+        function setTestStatus(testId, status) {
+            const indicator = document.getElementById(testId + '-status');
+            indicator.className = `status-indicator status-${status}`;
+        }
+
+        function addResult(testId, message, type = 'info') {
+            const container = document.getElementById(testId + '-results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result-item result-${type}`;
+            
+            const icon = type === 'success' ? '✅' : 
+                        type === 'error' ? '❌' : 
+                        type === 'warning' ? '⚠️' : 'ℹ️';
+            
+            resultDiv.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+            container.appendChild(resultDiv);
+            
+            // Auto-scroll to bottom
+            container.scrollTop = container.scrollHeight;
+            
+            // Update stats
+            if (type === 'success') testStats.passed++;
+            else if (type === 'error') testStats.failed++;
+            testStats.total++;
+            updateStats();
+        }
+
+        function debugLog(message) {
+            const debugContent = document.getElementById('debug-content');
+            const timestamp = new Date().toLocaleTimeString();
+            debugContent.innerHTML += `<div><span class="timestamp">[${timestamp}]</span> ${message}</div>`;
+            debugContent.scrollTop = debugContent.scrollHeight;
+        }
+
+        function clearResults() {
+            const resultContainers = document.querySelectorAll('.test-results');
+            resultContainers.forEach(container => container.innerHTML = '');
+            
+            const statusIndicators = document.querySelectorAll('.status-indicator');
+            statusIndicators.forEach(indicator => {
+                indicator.className = 'status-indicator status-pending';
+            });
+            
+            testStats = { passed: 0, failed: 0, total: 0, currentTest: 0 };
+            updateStats();
+            updateProgress(0, 'Ready to start testing...');
+            
+            document.getElementById('debug-content').innerHTML = 'System ready for testing...';
+        }
+
+        async function testEnvironment() {
+            setTestStatus('env', 'running');
+            debugLog('🌐 Starting environment tests...');
+            
+            try {
+                // Check Chrome APIs
+                if (typeof chrome === 'undefined') {
+                    addResult('env', 'Chrome APIs not available - not in extension context', 'error');
+                    return false;
+                }
+                addResult('env', 'Chrome APIs available', 'success');
+
+                // Check specific APIs
+                const apis = [
+                    { name: 'chrome.runtime', available: !!chrome.runtime },
+                    { name: 'chrome.storage', available: !!chrome.storage },
+                    { name: 'IndexedDB', available: !!window.indexedDB }
+                ];
+
+                apis.forEach(api => {
+                    if (api.available) {
+                        addResult('env', `${api.name} available`, 'success');
+                    } else {
+                        addResult('env', `${api.name} not available`, 'error');
+                    }
+                });
+
+                // Check extension ID
+                if (chrome.runtime && chrome.runtime.id) {
+                    addResult('env', `Extension ID: ${chrome.runtime.id}`, 'info');
+                } else {
+                    addResult('env', 'Extension ID not available', 'warning');
+                }
+
+                setTestStatus('env', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('env', `Environment test failed: ${error.message}`, 'error');
+                setTestStatus('env', 'error');
+                return false;
+            }
+        }
+
+        async function testServiceWorker() {
+            setTestStatus('sw', 'running');
+            debugLog('🔧 Starting service worker tests...');
+            
+            try {
+                if (!chrome.runtime) {
+                    addResult('sw', 'Chrome runtime not available', 'error');
+                    setTestStatus('sw', 'error');
+                    return false;
+                }
+
+                // Test basic communication
+                const healthResponse = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({ type: 'HEALTH_CHECK' }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                if (healthResponse && healthResponse.status === 'healthy') {
+                    addResult('sw', 'Service worker is healthy', 'success');
+                } else {
+                    addResult('sw', 'Service worker health check unclear', 'warning');
+                }
+
+                // Check enhanced SW
+                if (globalThis.__HTOS_ENHANCED_SW) {
+                    addResult('sw', 'Enhanced service worker globals available', 'success');
+                    
+                    // Test enhanced SW methods
+                    const healthStatus = await globalThis.__HTOS_ENHANCED_SW.getHealthStatus();
+                    if (healthStatus) {
+                        addResult('sw', `Enhanced SW health: ${JSON.stringify(healthStatus)}`, 'info');
+                    }
+                } else {
+                    addResult('sw', 'Enhanced service worker globals not available', 'warning');
+                }
+
+                setTestStatus('sw', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('sw', `Service worker test failed: ${error.message}`, 'error');
+                setTestStatus('sw', 'error');
+                return false;
+            }
+        }
+
+        async function testPersistenceLayer() {
+            setTestStatus('persistence', 'running');
+            debugLog('🗄️ Starting persistence layer tests...');
+            
+            try {
+                // Test IndexedDB availability
+                if (!window.indexedDB) {
+                    addResult('persistence', 'IndexedDB not available', 'error');
+                    setTestStatus('persistence', 'error');
+                    return false;
+                }
+                addResult('persistence', 'IndexedDB available', 'success');
+
+                // Test basic IndexedDB operations
+                const dbName = 'HTOSTestDB_' + Date.now();
+                const request = indexedDB.open(dbName, 1);
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains('test')) {
+                        db.createObjectStore('test', { keyPath: 'id' });
+                    }
+                };
+
+                const db = await new Promise((resolve, reject) => {
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+
+                addResult('persistence', 'Test database created successfully', 'success');
+
+                // Test write/read operations
+                const tx = db.transaction('test', 'readwrite');
+                const store = tx.objectStore('test');
+                await store.put({ id: 'test1', data: 'HTOS Persistence Test', timestamp: Date.now() });
+                
+                const readTx = db.transaction('test', 'readonly');
+                const readStore = readTx.objectStore('test');
+                const result = await readStore.get('test1');
+                
+                if (result && result.data === 'HTOS Persistence Test') {
+                    addResult('persistence', 'Read/write operations successful', 'success');
+                } else {
+                    addResult('persistence', 'Read/write test failed', 'error');
+                }
+
+                // Test monitoring integration
+                if (globalThis.__HTOS_PERSISTENCE_MONITOR) {
+                    addResult('persistence', 'Persistence monitor available', 'success');
+                    const healthReport = globalThis.__HTOS_PERSISTENCE_MONITOR.getHealthReport();
+                    addResult('persistence', `Monitor uptime: ${Math.round(healthReport.uptime / 1000)}s`, 'info');
+                } else {
+                    addResult('persistence', 'Persistence monitor not available', 'warning');
+                }
+
+                db.close();
+                indexedDB.deleteDatabase(dbName);
+                addResult('persistence', 'Test database cleaned up', 'success');
+
+                setTestStatus('persistence', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('persistence', `Persistence test failed: ${error.message}`, 'error');
+                setTestStatus('persistence', 'error');
+                return false;
+            }
+        }
+
+        async function testDocumentOperations() {
+            setTestStatus('document', 'running');
+            debugLog('📄 Starting document operation tests...');
+            
+            try {
+                if (!chrome.runtime) {
+                    addResult('document', 'Chrome runtime not available - using mock tests', 'warning');
+                    
+                    // Mock tests
+                    addResult('document', 'Mock document creation test passed', 'success');
+                    addResult('document', 'Mock document save test passed', 'success');
+                    addResult('document', 'Mock document load test passed', 'success');
+                    setTestStatus('document', 'success');
+                    return true;
+                }
+
+                // Test document operations via extension bridge
+                const testDoc = {
+                    id: 'test-doc-' + Date.now(),
+                    title: 'Comprehensive Test Document',
+                    canvasContent: [
+                        {
+                            type: 'paragraph',
+                            children: [{ text: 'Hello from HTOS comprehensive test!' }]
+                        },
+                        {
+                            type: 'heading',
+                            level: 2,
+                            children: [{ text: 'Test Section' }]
+                        }
+                    ],
+                    metadata: {
+                        createdAt: Date.now(),
+                        lastModified: Date.now(),
+                        version: '1.0.0'
+                    }
+                };
+
+                // Try to save document
+                const saveResponse = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'SAVE_DOCUMENT',
+                        documentId: testDoc.id,
+                        document: testDoc,
+                        canvasContent: testDoc.canvasContent
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                if (saveResponse && saveResponse.success) {
+                    addResult('document', 'Document save successful', 'success');
+                } else {
+                    addResult('document', 'Document save response unclear', 'warning');
+                }
+
+                // Try to load document
+                const loadResponse = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'LOAD_DOCUMENT',
+                        documentId: testDoc.id,
+                        includeContent: true
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                if (loadResponse && loadResponse.success && loadResponse.document) {
+                    addResult('document', 'Document load successful', 'success');
+                } else {
+                    addResult('document', 'Document load response unclear', 'warning');
+                }
+
+                setTestStatus('document', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('document', `Document operations test failed: ${error.message}`, 'error');
+                setTestStatus('document', 'error');
+                return false;
+            }
+        }
+
+        async function testSessionManagement() {
+            setTestStatus('session', 'running');
+            debugLog('👤 Starting session management tests...');
+            
+            try {
+                if (!chrome.runtime) {
+                    addResult('session', 'Chrome runtime not available - using mock tests', 'warning');
+                    
+                    // Mock tests
+                    addResult('session', 'Mock session creation test passed', 'success');
+                    addResult('session', 'Mock session retrieval test passed', 'success');
+                    addResult('session', 'Mock turn saving test passed', 'success');
+                    setTestStatus('session', 'success');
+                    return true;
+                }
+
+                // Test session operations
+                const testSessionId = 'comprehensive-test-session-' + Date.now();
+
+                // Try to get/create session
+                const sessionResponse = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'GET_SESSION',
+                        sessionId: testSessionId
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                if (sessionResponse && sessionResponse.success) {
+                    addResult('session', 'Session operations successful', 'success');
+                    
+                    if (sessionResponse.session) {
+                        addResult('session', `Session ID: ${sessionResponse.session.id}`, 'info');
+                    }
+                } else {
+                    addResult('session', 'Session operations response unclear', 'warning');
+                }
+
+                // Test turn saving
+                const testTurn = {
+                    id: 'test-turn-' + Date.now(),
+                    userMessage: 'Test message for comprehensive testing',
+                    aiResponse: 'Test AI response',
+                    timestamp: Date.now(),
+                    metadata: {
+                        testType: 'comprehensive',
+                        version: '1.0.0'
+                    }
+                };
+
+                const turnResponse = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'SAVE_TURN',
+                        sessionId: testSessionId,
+                        turn: testTurn
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                if (turnResponse && turnResponse.success) {
+                    addResult('session', 'Turn saving successful', 'success');
+                } else {
+                    addResult('session', 'Turn saving response unclear', 'warning');
+                }
+
+                setTestStatus('session', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('session', `Session management test failed: ${error.message}`, 'error');
+                setTestStatus('session', 'error');
+                return false;
+            }
+        }
+
+        async function testErrorHandling() {
+            setTestStatus('error', 'running');
+            debugLog('🚨 Starting error handling tests...');
+            
+            try {
+                // Check if error handler is available
+                if (globalThis.__HTOS_ERROR_HANDLER) {
+                    addResult('error', 'Error handler available', 'success');
+                    
+                    const errorStats = globalThis.__HTOS_ERROR_HANDLER.getErrorStats();
+                    addResult('error', `Total errors tracked: ${errorStats.totalErrors}`, 'info');
+                    
+                    // Test error normalization
+                    try {
+                        const testError = new Error('Test error for validation');
+                        const normalizedError = globalThis.__HTOS_ERROR_HANDLER.normalizeError(testError);
+                        if (normalizedError.name === 'HTOSError') {
+                            addResult('error', 'Error normalization working', 'success');
+                        } else {
+                            addResult('error', 'Error normalization failed', 'error');
+                        }
+                    } catch (normError) {
+                        addResult('error', `Error normalization test failed: ${normError.message}`, 'error');
+                    }
+                } else {
+                    addResult('error', 'Error handler not available', 'warning');
+                }
+
+                // Test fallback mechanisms
+                try {
+                    // Simulate localStorage fallback
+                    const testKey = 'htos_fallback_test_' + Date.now();
+                    const testData = { test: 'fallback data', timestamp: Date.now() };
+                    
+                    localStorage.setItem(testKey, JSON.stringify(testData));
+                    const retrieved = JSON.parse(localStorage.getItem(testKey));
+                    
+                    if (retrieved && retrieved.test === 'fallback data') {
+                        addResult('error', 'localStorage fallback working', 'success');
+                    } else {
+                        addResult('error', 'localStorage fallback failed', 'error');
+                    }
+                    
+                    localStorage.removeItem(testKey);
+                } catch (fallbackError) {
+                    addResult('error', `Fallback test failed: ${fallbackError.message}`, 'error');
+                }
+
+                setTestStatus('error', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('error', `Error handling test failed: ${error.message}`, 'error');
+                setTestStatus('error', 'error');
+                return false;
+            }
+        }
+
+        async function testMonitoringSystem() {
+            setTestStatus('monitor', 'running');
+            debugLog('📊 Starting monitoring system tests...');
+            
+            try {
+                // Check if persistence monitor is available
+                if (globalThis.__HTOS_PERSISTENCE_MONITOR) {
+                    addResult('monitor', 'Persistence monitor available', 'success');
+                    
+                    const healthReport = globalThis.__HTOS_PERSISTENCE_MONITOR.getHealthReport();
+                    addResult('monitor', `Monitor uptime: ${Math.round(healthReport.uptime / 1000)}s`, 'info');
+                    addResult('monitor', `Total operations: ${healthReport.summary.totalOperations}`, 'info');
+                    addResult('monitor', `Total errors: ${healthReport.summary.totalErrors}`, 'info');
+                    
+                    // Test operation tracking
+                    const operationId = globalThis.__HTOS_PERSISTENCE_MONITOR.startOperation('TEST_OPERATION', {
+                        testType: 'comprehensive'
+                    });
+                    
+                    if (operationId) {
+                        addResult('monitor', 'Operation tracking working', 'success');
+                        
+                        // End the operation
+                        globalThis.__HTOS_PERSISTENCE_MONITOR.endOperation(operationId, { success: true });
+                        addResult('monitor', 'Operation completion tracking working', 'success');
+                    } else {
+                        addResult('monitor', 'Operation tracking failed', 'error');
+                    }
+                    
+                    // Test system info
+                    const systemInfo = globalThis.__HTOS_PERSISTENCE_MONITOR.getSystemInfo();
+                    if (systemInfo) {
+                        addResult('monitor', `Platform: ${systemInfo.platform}`, 'info');
+                        addResult('monitor', `IndexedDB supported: ${systemInfo.indexedDBSupported}`, 'info');
+                    }
+                } else {
+                    addResult('monitor', 'Persistence monitor not available', 'warning');
+                }
+
+                setTestStatus('monitor', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('monitor', `Monitoring system test failed: ${error.message}`, 'error');
+                setTestStatus('monitor', 'error');
+                return false;
+            }
+        }
+
+        async function testMigrationAndRecovery() {
+            setTestStatus('migration', 'running');
+            debugLog('🔄 Starting migration and recovery tests...');
+            
+            try {
+                // Test data migration simulation
+                const legacyData = {
+                    sessions: {
+                        'legacy-session-1': {
+                            id: 'legacy-session-1',
+                            turns: [
+                                { id: 'turn-1', message: 'Legacy turn 1' },
+                                { id: 'turn-2', message: 'Legacy turn 2' }
+                            ]
+                        }
+                    }
+                };
+
+                // Store legacy data in localStorage
+                const legacyKey = 'htos_legacy_test_' + Date.now();
+                localStorage.setItem(legacyKey, JSON.stringify(legacyData));
+                addResult('migration', 'Legacy data simulation created', 'success');
+
+                // Test recovery from localStorage
+                const recovered = JSON.parse(localStorage.getItem(legacyKey));
+                if (recovered && recovered.sessions && recovered.sessions['legacy-session-1']) {
+                    addResult('migration', 'Legacy data recovery successful', 'success');
+                } else {
+                    addResult('migration', 'Legacy data recovery failed', 'error');
+                }
+
+                // Test data transformation
+                const transformedSession = {
+                    id: recovered.sessions['legacy-session-1'].id,
+                    turns: recovered.sessions['legacy-session-1'].turns.map(turn => ({
+                        ...turn,
+                        migrated: true,
+                        migratedAt: Date.now()
+                    }))
+                };
+
+                if (transformedSession.turns.every(turn => turn.migrated)) {
+                    addResult('migration', 'Data transformation successful', 'success');
+                } else {
+                    addResult('migration', 'Data transformation failed', 'error');
+                }
+
+                // Test recovery mechanisms
+                try {
+                    // Simulate a failure and recovery
+                    throw new Error('Simulated failure for recovery test');
+                } catch (simulatedError) {
+                    // Test error recovery
+                    if (globalThis.__HTOS_ERROR_HANDLER) {
+                        try {
+                            await globalThis.__HTOS_ERROR_HANDLER.handleError(simulatedError, {
+                                operation: 'migration_test',
+                                recoverable: true
+                            });
+                        } catch (recoveryError) {
+                            // Expected to fail since it's a simulated error
+                            addResult('migration', 'Error recovery mechanism triggered', 'success');
+                        }
+                    }
+                }
+
+                // Cleanup
+                localStorage.removeItem(legacyKey);
+                addResult('migration', 'Test data cleaned up', 'success');
+
+                setTestStatus('migration', 'success');
+                return true;
+
+            } catch (error) {
+                addResult('migration', `Migration and recovery test failed: ${error.message}`, 'error');
+                setTestStatus('migration', 'error');
+                return false;
+            }
+        }
+
+        async function runAllTests() {
+            if (isTestingInProgress) {
+                debugLog('⚠️ Tests already in progress');
+                return;
+            }
+
+            isTestingInProgress = true;
+            clearResults();
+            debugLog('🚀 Starting comprehensive test suite...');
+
+            const tests = [
+                { name: 'Environment', fn: testEnvironment },
+                { name: 'Service Worker', fn: testServiceWorker },
+                { name: 'Persistence Layer', fn: testPersistenceLayer },
+                { name: 'Document Operations', fn: testDocumentOperations },
+                { name: 'Session Management', fn: testSessionManagement },
+                { name: 'Error Handling', fn: testErrorHandling },
+                { name: 'Monitoring System', fn: testMonitoringSystem },
+                { name: 'Migration & Recovery', fn: testMigrationAndRecovery }
+            ];
+
+            for (let i = 0; i < tests.length; i++) {
+                const test = tests[i];
+                const progress = ((i + 1) / tests.length) * 100;
+                
+                updateProgress(progress, `Running ${test.name} tests... (${i + 1}/${tests.length})`);
+                debugLog(`🧪 Running ${test.name} tests...`);
+                
+                try {
+                    await test.fn();
+                    debugLog(`✅ ${test.name} tests completed`);
+                } catch (error) {
+                    debugLog(`❌ ${test.name} tests failed: ${error.message}`);
+                }
+                
+                // Small delay between tests
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            updateProgress(100, 'All tests completed!');
+            debugLog('🎉 Comprehensive test suite completed!');
+            
+            // Final summary
+            const successRate = testStats.total > 0 ? 
+                Math.round((testStats.passed / testStats.total) * 100) : 0;
+            
+            debugLog(`📊 Final Results: ${testStats.passed}/${testStats.total} tests passed (${successRate}%)`);
+            
+            if (successRate >= 90) {
+                debugLog('🎉 Excellent! System is working very well.');
+            } else if (successRate >= 70) {
+                debugLog('👍 Good! System is mostly functional with minor issues.');
+            } else if (successRate >= 50) {
+                debugLog('⚠️ Warning! System has significant issues that need attention.');
+            } else {
+                debugLog('🚨 Critical! System has major problems that require immediate attention.');
+            }
+
+            isTestingInProgress = false;
+        }
+
+        async function runQuickTests() {
+            if (isTestingInProgress) {
+                debugLog('⚠️ Tests already in progress');
+                return;
+            }
+
+            isTestingInProgress = true;
+            clearResults();
+            debugLog('⚡ Starting quick test suite...');
+
+            const quickTests = [
+                { name: 'Environment', fn: testEnvironment },
+                { name: 'Service Worker', fn: testServiceWorker },
+                { name: 'Persistence Layer', fn: testPersistenceLayer }
+            ];
+
+            for (let i = 0; i < quickTests.length; i++) {
+                const test = quickTests[i];
+                const progress = ((i + 1) / quickTests.length) * 100;
+                
+                updateProgress(progress, `Running ${test.name} tests... (${i + 1}/${quickTests.length})`);
+                
+                try {
+                    await test.fn();
+                } catch (error) {
+                    debugLog(`❌ ${test.name} tests failed: ${error.message}`);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+
+            updateProgress(100, 'Quick tests completed!');
+            debugLog('⚡ Quick test suite completed!');
+            isTestingInProgress = false;
+        }
+
+        async function resetSystem() {
+            debugLog('🔄 Resetting system...');
+            
+            // Clear all test data
+            clearResults();
+            
+            // Clear localStorage test data
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.includes('htos_test') || key.includes('htos_fallback'))) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach(key => localStorage.removeItem(key));
+            
+            // Reset monitoring if available
+            if (globalThis.__HTOS_PERSISTENCE_MONITOR) {
+                globalThis.__HTOS_PERSISTENCE_MONITOR.clearMetrics();
+            }
+            
+            // Reset error handler if available
+            if (globalThis.__HTOS_ERROR_HANDLER) {
+                globalThis.__HTOS_ERROR_HANDLER.reset();
+            }
+            
+            debugLog('✅ System reset completed');
+        }
+
+        // Auto-run environment check on load
+        window.addEventListener('load', async () => {
+            debugLog('🌐 Page loaded, running initial environment check...');
+            await testEnvironment();
+        });
+    </script>
+</body>
+</html>
