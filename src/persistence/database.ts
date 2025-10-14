@@ -1,6 +1,6 @@
 // IndexedDB Database Initialization for HTOS Document Composition System
 
-import { StoreConfig, MetadataRecord } from './types.js';
+import { StoreConfig, MetadataRecord } from './types';
 
 export const DB_NAME = 'OpusDeusDB';
 export const DB_VERSION = 1;
@@ -133,6 +133,7 @@ export async function openDatabase(): Promise<IDBDatabase> {
         // Set initial metadata
         const metadataStore = transaction.objectStore('metadata');
         const schemaVersionRecord: MetadataRecord = {
+          id: 'schema_version_record',
           key: 'schema_version',
           value: SCHEMA_VERSION,
           updatedAt: Date.now()
@@ -149,7 +150,7 @@ export async function openDatabase(): Promise<IDBDatabase> {
       
       // Handle database errors
       db.onerror = (event) => {
-        console.error('Database error:', (event.target as IDBDatabase).error);
+        console.error('Database error:', (event.target as IDBRequest).error);
       };
       
       // Handle version change (another tab upgraded the schema)

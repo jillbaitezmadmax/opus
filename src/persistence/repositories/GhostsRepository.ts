@@ -1,7 +1,7 @@
 // Ghosts Repository - Manages ghost records for temporal state tracking
 
-import { BaseRepository } from '../BaseRepository.js';
-import { GhostRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { GhostRecord } from '../types';
 
 export class GhostsRepository extends BaseRepository<GhostRecord> {
   constructor(db: IDBDatabase) {
@@ -9,11 +9,18 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   }
 
   /**
+   * Get ghosts by document ID
+   */
+  async getByDocumentId(documentId: string): Promise<GhostRecord[]> {
+    return this.getByIndex('documentId', documentId);
+  }
+
+  /**
    * Get ghosts by entity ID
    */
   async getByEntityId(entityId: string): Promise<GhostRecord[]> {
     const ghosts = await this.getByIndex('entityId', entityId);
-    return ghosts.sort((a, b) => b.timestamp - a.timestamp);
+    return ghosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }
 
   /**
@@ -60,7 +67,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
     const ghosts = await this.getByEntityId(entityId);
     
     // Find the ghost that was active at the given timestamp
-    return ghosts.find(ghost => ghost.timestamp <= timestamp) || null;
+    return ghosts.find(ghost => (ghost.timestamp || 0) <= timestamp) || null;
   }
 
   /**
@@ -91,12 +98,24 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   ): Promise<GhostRecord> {
     const ghost: GhostRecord = {
       id: crypto.randomUUID(),
+      documentId: entityId,  // Map entityId to documentId
+      text: JSON.stringify(state),  // Convert state to text
+      preview: JSON.stringify(state).substring(0, 200),  // First 200 chars
+      provenance: {
+        sessionId,
+        aiTurnId: entityId,  // Use entityId as aiTurnId for now
+        providerId: 'system',  // Default provider
+        responseType: 'batch' as const,
+        responseIndex: 0
+      },
+      order: 0,  // Default order
+      createdAt: Date.now(),
+      isPinned: false,
+      timestamp: Date.now(),
       entityId,
       entityType,
-      sessionId,
       operation,
       state,
-      timestamp: Date.now(),
       metadata: metadata || {}
     };
 
@@ -115,7 +134,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
     const ghosts = await this.getByEntityId(entityId);
     
     return ghosts.filter(ghost => 
-      ghost.timestamp >= startTime && ghost.timestamp <= endTime
+      (ghost.timestamp || 0) >= startTime && (ghost.timestamp || 0) <= endTime
     );
   }
 
@@ -125,7 +144,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   async getRecentActivity(sessionId: string, limit: number = 50): Promise<GhostRecord[]> {
     const ghosts = await this.getBySessionId(sessionId);
     return ghosts
-      .sort((a, b) => b.timestamp - a.timestamp)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
       .slice(0, limit);
   }
 
@@ -153,18 +172,26 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
       return stats;
     }
 
-    const timestamps = ghosts.map(g => g.timestamp);
-    stats.timeRange = {
-      start: Math.min(...timestamps),
-      end: Math.max(...timestamps)
-    };
+    const timestamps = ghosts.map(g => g.timestamp || 0).filter(t => t > 0);
+    if (timestamps.length > 0) {
+      stats.timeRange = {
+        start: Math.min(...timestamps),
+        end: Math.max(...timestamps)
+      };
+    }
 
     const uniqueEntities = new Set<string>();
 
     ghosts.forEach(ghost => {
-      stats.byOperation[ghost.operation] = (stats.byOperation[ghost.operation] || 0) + 1;
-      stats.byEntityType[ghost.entityType] = (stats.byEntityType[ghost.entityType] || 0) + 1;
-      uniqueEntities.add(ghost.entityId);
+      if (ghost.operation) {
+        stats.byOperation[ghost.operation] = (stats.byOperation[ghost.operation] || 0) + 1;
+      }
+      if (ghost.entityType) {
+        stats.byEntityType[ghost.entityType] = (stats.byEntityType[ghost.entityType] || 0) + 1;
+      }
+      if (ghost.entityId) {
+        uniqueEntities.add(ghost.entityId);
+      }
     });
 
     stats.entitiesModified = uniqueEntities.size;
@@ -173,12 +200,12 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   }
 
   /**
-   * Restore entity to previous state
+   * Restore entity to a specific timestamp
    */
   async restoreEntityTo(entityId: string, timestamp: number): Promise<any | null> {
     const targetGhost = await this.getAtTimestamp(entityId, timestamp);
     
-    if (!targetGhost) {
+    if (!targetGhost || !targetGhost.entityType || !targetGhost.sessionId) {
       return null;
     }
 
@@ -245,44 +272,37 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   }
 
   /**
-   * Clean up old ghosts
+   * Clean up old ghosts while preserving minimum count
    */
   async cleanupOldGhosts(olderThanDays: number = 90, keepMinimum: number = 5): Promise<number> {
-    const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
+    const cutoffTime = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
     
-    // Get all entities that have ghosts
+    // Get all ghosts sorted by timestamp (newest first)
     const allGhosts = await this.getAll();
-    const entitiesByType = new Map<string, GhostRecord[]>();
-
-    allGhosts.forEach(ghost => {
-      const key = `${ghost.entityType}:${ghost.entityId}`;
-      if (!entitiesByType.has(key)) {
-        entitiesByType.set(key, []);
-      }
-      entitiesByType.get(key)!.push(ghost);
-    });
-
+    const sortedGhosts = allGhosts
+      .filter(ghost => ghost.timestamp !== undefined)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    
+    // Keep minimum number of ghosts regardless of age
+    const ghostsToConsider = sortedGhosts.slice(keepMinimum);
+    
+    // Find ghosts older than cutoff
+    const ghostsToDelete = ghostsToConsider.filter(ghost => 
+      ghost.timestamp !== undefined && ghost.timestamp < cutoffTime
+    );
+    
+    // Delete old ghosts
     let deletedCount = 0;
-
-    // For each entity, keep minimum number of recent ghosts
-    for (const [entityKey, ghosts] of entitiesByType) {
-      const sortedGhosts = ghosts.sort((a, b) => b.timestamp - a.timestamp);
-      const toDelete = sortedGhosts
-        .slice(keepMinimum) // Keep minimum recent ghosts
-        .filter(ghost => ghost.timestamp < cutoffDate);
-
-      if (toDelete.length > 0) {
-        const ids = toDelete.map(ghost => ghost.id);
-        await this.deleteMany(ids);
-        deletedCount += toDelete.length;
-      }
+    for (const ghost of ghostsToDelete) {
+      await this.delete(ghost.id);
+      deletedCount++;
     }
-
+    
     return deletedCount;
   }
 
   /**
-   * Get ghost timeline for multiple entities
+   * Get timeline of ghosts for multiple entities
    */
   async getTimeline(
     entityIds: string[],
@@ -290,41 +310,45 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
     endTime?: number
   ): Promise<GhostRecord[]> {
     const allGhosts: GhostRecord[] = [];
-
+    
     for (const entityId of entityIds) {
       const entityGhosts = await this.getByEntityId(entityId);
       allGhosts.push(...entityGhosts);
     }
-
+    
+    // Filter by time range if provided
     let filteredGhosts = allGhosts;
-
-    if (startTime !== undefined) {
-      filteredGhosts = filteredGhosts.filter(ghost => ghost.timestamp >= startTime);
+    if (startTime !== undefined || endTime !== undefined) {
+      filteredGhosts = allGhosts.filter(ghost => {
+        if (ghost.timestamp === undefined) return false;
+        if (startTime !== undefined && ghost.timestamp < startTime) return false;
+        if (endTime !== undefined && ghost.timestamp > endTime) return false;
+        return true;
+      });
     }
-
-    if (endTime !== undefined) {
-      filteredGhosts = filteredGhosts.filter(ghost => ghost.timestamp <= endTime);
-    }
-
-    return filteredGhosts.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Sort by timestamp
+    return filteredGhosts.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }
 
   /**
-   * Get entities modified in time range
+   * Get entities modified within time range
    */
   async getModifiedEntities(
     startTime: number,
     endTime: number,
     entityType?: string
   ): Promise<string[]> {
-    let ghosts = await this.getByTimeRange(new Date(startTime), new Date(endTime));
-
-    if (entityType) {
-      ghosts = ghosts.filter(ghost => ghost.entityType === entityType);
-    }
-
-    const entityIds = new Set(ghosts.map(ghost => ghost.entityId));
-    return Array.from(entityIds);
+    const range = IDBKeyRange.bound(startTime, endTime);
+    const ghosts = await this.getByIndex('timestamp', range);
+    
+    const entityIds = ghosts
+      .filter(ghost => !entityType || ghost.entityType === entityType)
+      .map(ghost => ghost.entityId)
+      .filter((id): id is string => id !== undefined);
+    
+    // Remove duplicates
+    return [...new Set(entityIds)];
   }
 
   /**
@@ -349,24 +373,36 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   }>> {
     const allGhosts = await this.getAll();
     const stats: Record<string, any> = {};
-
-    allGhosts.forEach(ghost => {
-      if (!stats[ghost.entityType]) {
-        stats[ghost.entityType] = {
+    
+    for (const ghost of allGhosts) {
+      if (!ghost.entityType) continue;
+      
+      const entityType = ghost.entityType;
+      if (!stats[entityType]) {
+        stats[entityType] = {
           total: 0,
           byOperation: {},
-          oldestTimestamp: ghost.timestamp,
-          newestTimestamp: ghost.timestamp
+          oldestTimestamp: Number.MAX_SAFE_INTEGER,
+          newestTimestamp: 0
         };
       }
-
-      const entityStats = stats[ghost.entityType];
-      entityStats.total++;
-      entityStats.byOperation[ghost.operation] = (entityStats.byOperation[ghost.operation] || 0) + 1;
-      entityStats.oldestTimestamp = Math.min(entityStats.oldestTimestamp, ghost.timestamp);
-      entityStats.newestTimestamp = Math.max(entityStats.newestTimestamp, ghost.timestamp);
-    });
-
+      
+      stats[entityType].total++;
+      
+      if (ghost.operation) {
+        const operation = ghost.operation;
+        if (!stats[entityType].byOperation[operation]) {
+          stats[entityType].byOperation[operation] = 0;
+        }
+        stats[entityType].byOperation[operation]++;
+      }
+      
+      if (ghost.timestamp !== undefined) {
+        stats[entityType].oldestTimestamp = Math.min(stats[entityType].oldestTimestamp, ghost.timestamp);
+        stats[entityType].newestTimestamp = Math.max(stats[entityType].newestTimestamp, ghost.timestamp);
+      }
+    }
+    
     return stats;
   }
 }

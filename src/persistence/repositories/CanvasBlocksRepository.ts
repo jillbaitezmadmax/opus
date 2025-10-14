@@ -1,7 +1,7 @@
-// Canvas Blocks Repository - Manages canvas block records and hierarchical content
+//// Canvas Blocks Repository - Manages canvas block records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { CanvasBlockRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { CanvasBlockRecord } from '../types';
 
 export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
   constructor(db: IDBDatabase) {
@@ -83,7 +83,7 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
     
     return {
       ...block,
-      children: children.sort((a, b) => a.order - b.order)
+      children: children.sort((a, b) => a.order - b.order).map(child => child.id)
     };
   }
 
@@ -142,7 +142,7 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
   async moveBlock(blockId: string, newParentId: string | null, newOrder: number): Promise<void> {
     const block = await this.get(blockId);
     if (block) {
-      block.parentId = newParentId;
+      block.parentId = newParentId || undefined;
       block.order = newOrder;
       block.updatedAt = Date.now();
       await this.put(block);
@@ -200,9 +200,9 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
     }
 
     const targetDocumentId = newDocumentId || original.documentId;
-    const targetParentId = newParentId !== undefined ? newParentId : original.parentId;
+    const targetParentId = newParentId !== undefined ? (newParentId || undefined) : original.parentId;
     
-    const newOrder = await this.getNextOrder(targetDocumentId, targetParentId);
+    const newOrder = await this.getNextOrder(targetDocumentId, targetParentId || null);
     
     const duplicate: CanvasBlockRecord = {
       ...original,
@@ -313,7 +313,9 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
 
     for (const block of blocks) {
       // Count by type
-      stats.byType[block.type] = (stats.byType[block.type] || 0) + 1;
+      if (block.type) {
+    stats.byType[block.type] = (stats.byType[block.type] || 0) + 1;
+}
       
       // Calculate depth
       let depth = 0;
@@ -375,7 +377,9 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
       for (const block of blocks) {
         flattened.push(block);
         if (block.children && block.children.length > 0) {
-          flatten(block.children);
+          // Convert string IDs to CanvasBlockRecord objects
+          const childBlocks = hierarchy.filter(b => block.children?.includes(b.id));
+          flatten(childBlocks);
         }
       }
     };

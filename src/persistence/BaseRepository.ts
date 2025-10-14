@@ -1,7 +1,7 @@
 // Base Repository Class for IndexedDB Operations
 
-import { withTransaction, promisifyRequest, batchWrite, batchDelete } from './transactions.js';
-import { BatchWriteResult } from './types.js';
+import { withTransaction, promisifyRequest, batchWrite, batchDelete } from './transactions';
+import { BatchWriteResult } from './types';
 
 /**
  * Abstract base repository class providing common CRUD operations

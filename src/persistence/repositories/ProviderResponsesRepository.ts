@@ -1,7 +1,7 @@
-// Provider Responses Repository - Manages AI provider response records
+// Provider Responses Repository - Manages provider response records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { ProviderResponseRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { ProviderResponseRecord } from '../types';
 
 export class ProviderResponsesRepository extends BaseRepository<ProviderResponseRecord> {
   constructor(db: IDBDatabase) {
@@ -32,7 +32,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   /**
    * Get responses by status
    */
-  async getByStatus(status: 'pending' | 'completed' | 'failed' | 'cancelled'): Promise<ProviderResponseRecord[]> {
+  async getByStatus(status: 'pending' | 'completed' | 'error' | 'cancelled'): Promise<ProviderResponseRecord[]> {
     return this.getByIndex('status', status);
   }
 
@@ -55,7 +55,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
    * Get failed responses
    */
   async getFailedResponses(): Promise<ProviderResponseRecord[]> {
-    return this.getByStatus('failed');
+    return this.getByStatus('error');
   }
 
   /**
@@ -63,10 +63,10 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
    */
   async getByProviderAndStatus(
     provider: string, 
-    status: 'pending' | 'completed' | 'failed' | 'cancelled'
+    status: 'pending' | 'completed' | 'error' | 'cancelled'
   ): Promise<ProviderResponseRecord[]> {
-    const providerResponses = await this.getByProvider(provider);
-    return providerResponses.filter(response => response.status === status);
+    const allResponses = await this.getByProvider(provider);
+    return allResponses.filter((r: ProviderResponseRecord) => r.status === status);
   }
 
   /**
@@ -74,7 +74,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
    */
   async updateStatus(
     responseId: string, 
-    status: 'pending' | 'completed' | 'failed' | 'cancelled',
+    status: 'pending' | 'completed' | 'error' | 'cancelled' | 'streaming',
     error?: string
   ): Promise<void> {
     const response = await this.get(responseId);
@@ -130,13 +130,13 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
       responses = await this.getAll();
     }
 
-    const completed = responses.filter(r => r.status === 'completed');
-    const failed = responses.filter(r => r.status === 'failed');
+    const completed = responses.filter((r: ProviderResponseRecord) => r.status === 'completed');
+    const failed = responses.filter((r: ProviderResponseRecord) => r.status === 'error');
     
     // Calculate average response time for completed responses
     const responseTimes = completed
-      .filter(r => r.completedAt)
-      .map(r => r.completedAt! - r.createdAt);
+      .filter((r: ProviderResponseRecord) => r.completedAt)
+      .map((r: ProviderResponseRecord) => r.completedAt! - r.createdAt);
     
     const averageResponseTime = responseTimes.length > 0 
       ? responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length 
@@ -153,12 +153,12 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
     // If no specific provider, include breakdown by provider
     if (!provider) {
       const byProvider: Record<string, any> = {};
-      const providers = [...new Set(responses.map(r => r.provider))];
+      const providers = Array.from(new Set(responses.map((r: ProviderResponseRecord) => r.providerId)));
       
       for (const p of providers) {
-        const providerResponses = responses.filter(r => r.provider === p);
-        const providerCompleted = providerResponses.filter(r => r.status === 'completed');
-        const providerFailed = providerResponses.filter(r => r.status === 'failed');
+        const providerResponses = responses.filter((r: ProviderResponseRecord) => r.providerId === p);
+        const providerCompleted = providerResponses.filter((r: ProviderResponseRecord) => r.status === 'completed');
+        const providerFailed = providerResponses.filter((r: ProviderResponseRecord) => r.status === 'error');
         
         byProvider[p] = {
           total: providerResponses.length,
@@ -198,7 +198,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
     }
 
     return responses.filter(response => 
-      response.content.toLowerCase().includes(searchQuery)
+      response.content && response.content.toLowerCase().includes(searchQuery)
     );
   }
 
@@ -261,12 +261,12 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
     const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
     const failedResponses = await this.getFailedResponses();
     
-    const toDelete = failedResponses.filter(response => 
+    const toDelete = failedResponses.filter((response: ProviderResponseRecord) =>
       response.createdAt < cutoffDate
     );
 
     if (toDelete.length > 0) {
-      const ids = toDelete.map(response => response.id);
+      const ids = toDelete.map((response: ProviderResponseRecord) => response.id);
       await this.deleteMany(ids);
     }
 
@@ -283,14 +283,22 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
     pendingCount: number;
   }> {
     const responses = await this.getByTurnId(turnId);
-    const providers = [...new Set(responses.map(r => r.provider))];
+    const providers = Array.from(new Set(responses.map((r: ProviderResponseRecord) => r.providerId)));
     
     return {
-      responses: responses.sort((a, b) => a.createdAt - b.createdAt),
+      responses: responses.sort((a: ProviderResponseRecord, b: ProviderResponseRecord) => a.createdAt - b.createdAt),
       providers,
-      completedCount: responses.filter(r => r.status === 'completed').length,
-      pendingCount: responses.filter(r => r.status === 'pending').length
+      completedCount: responses.filter((r: ProviderResponseRecord) => r.status === 'completed').length,
+      pendingCount: responses.filter((r: ProviderResponseRecord) => r.status === 'pending').length
     };
+  }
+
+  /**
+   * Get response by compound key (for compatibility)
+   */
+  async getByCompoundKey(key: string): Promise<ProviderResponseRecord | null> {
+    // Assuming the compound key is the response ID
+    return this.get(key);
   }
 
   /**

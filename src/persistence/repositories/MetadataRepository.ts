@@ -1,7 +1,7 @@
-// Metadata Repository - Manages metadata records and key-value pairs
+// // Metadata Repository - Manages metadata records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { MetadataRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { MetadataRecord } from '../types';
 
 export class MetadataRepository extends BaseRepository<MetadataRecord> {
   constructor(db: IDBDatabase) {
@@ -49,7 +49,7 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
    */
   async getValue(entityId: string, key: string): Promise<any | null> {
     const entityMetadata = await this.getByEntityId(entityId);
-    const metadata = entityMetadata.find(m => m.key === key);
+    const metadata = entityMetadata.find((m: MetadataRecord) => m.key === key);
     return metadata ? metadata.value : null;
   }
 
@@ -183,6 +183,9 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
     const stats: Record<string, any> = {};
 
     allMetadata.forEach(metadata => {
+      // Skip records with undefined entityType to avoid index errors
+      if (!metadata.entityType) return;
+      
       if (!stats[metadata.entityType]) {
         stats[metadata.entityType] = {
           totalRecords: 0,
@@ -193,10 +196,14 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
       }
 
       const entityStats = stats[metadata.entityType];
-      entityStats.totalRecords++;
-      entityStats.uniqueEntities.add(metadata.entityId);
-      entityStats.uniqueKeys.add(metadata.key);
-      entityStats.keyFrequency[metadata.key] = (entityStats.keyFrequency[metadata.key] || 0) + 1;
+      if (entityStats) {
+          entityStats.totalRecords++;
+          if (metadata.entityId) {
+            entityStats.uniqueEntities.add(metadata.entityId);
+          }
+          entityStats.uniqueKeys.add(metadata.key);
+          entityStats.keyFrequency[metadata.key] = (entityStats.keyFrequency[metadata.key] || 0) + 1;
+        }
     });
 
     // Convert Sets to counts
@@ -221,7 +228,7 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
       metadata = await this.getByKey(key);
     }
 
-    const entityIds = new Set(metadata.map(m => m.entityId));
+    const entityIds = new Set(metadata.map(m => m.entityId).filter((id): id is string => id !== undefined));
     return Array.from(entityIds);
   }
 
@@ -242,7 +249,7 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
       JSON.stringify(m.value) === JSON.stringify(value)
     );
 
-    return matchingMetadata.map(m => m.entityId);
+    return matchingMetadata.map(m => m.entityId).filter((id): id is string => id !== undefined);
   }
 
   /**
@@ -332,7 +339,7 @@ export class MetadataRepository extends BaseRepository<MetadataRecord> {
    */
   async cleanupOrphanedMetadata(validEntityIds: Set<string>): Promise<number> {
     const allMetadata = await this.getAll();
-    const orphaned = allMetadata.filter(m => !validEntityIds.has(m.entityId));
+    const orphaned = allMetadata.filter(m => m.entityId && !validEntityIds.has(m.entityId));
     
     if (orphaned.length > 0) {
       const ids = orphaned.map(m => m.id);

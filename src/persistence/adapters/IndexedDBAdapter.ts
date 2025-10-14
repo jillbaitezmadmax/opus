@@ -1,26 +1,28 @@
 // IndexedDB Persistence Adapter Implementation
 
-import { openDatabase, checkDatabaseHealth } from '../database.js';
-import { withTransaction } from '../transactions.js';
-import { createRepositories, type RepositoryCollection } from '../repositories/index.js';
+import { openDatabase, checkDatabaseHealth } from '../database';
+import { withTransaction } from '../transactions';
+import { createRepositories, type RepositoryCollection } from '../repositories/index';
 import type {
   IPersistenceAdapter,
   PersistenceConfig,
   QueryOptions,
   BatchResult,
   HealthStatus
-} from './IPersistenceAdapter.js';
+} from './IPersistenceAdapter';
 import type {
   SessionRecord,
   ThreadRecord,
   TurnRecord,
+  UserTurnRecord,
+  AiTurnRecord,
   ProviderResponseRecord,
   DocumentRecord,
   CanvasBlockRecord,
   GhostRecord,
   ProviderContextRecord,
   MetadataRecord
-} from '../types.js';
+} from '../types';
 
 /**
  * IndexedDB implementation of the persistence adapter
@@ -30,7 +32,7 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   private repositories: RepositoryCollection | null = null;
   private config: PersistenceConfig = {};
   private eventHandlers: Map<string, Set<Function>> = new Map();
-  private cleanupInterval: number | null = null;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
   private metrics = {
     totalOperations: 0,
     errorCount: 0,
@@ -57,7 +59,7 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
     };
 
     try {
-      this.db = await openDatabase(this.config.dbName!, this.config.dbVersion!);
+      this.db = await openDatabase();
       this.repositories = createRepositories(this.db);
 
       if (this.config.autoCleanup) {
@@ -104,13 +106,13 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
     }
 
     try {
-      const dbHealth = await checkDatabaseHealth(this.db);
+      const dbHealth = await checkDatabaseHealth();
       const avgResponseTime = this.metrics.responseTimes.length > 0
         ? this.metrics.responseTimes.reduce((a, b) => a + b, 0) / this.metrics.responseTimes.length
         : 0;
 
       return {
-        healthy: dbHealth,
+        healthy: dbHealth.isHealthy,
         connected: true,
         lastActivity: Date.now(),
         metrics: {
@@ -174,7 +176,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteSession(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.sessions.delete(id);
+      await this.repositories!.sessions.delete(id);
+      return true;
     });
   }
 
@@ -236,7 +239,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteThread(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.threads.delete(id);
+      await this.repositories!.threads.delete(id);
+      return true;
     });
   }
 
@@ -260,12 +264,34 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
       this.ensureReady();
       const id = crypto.randomUUID();
       const now = Date.now();
-      const fullTurn: TurnRecord = {
-        ...turn,
-        id,
-        createdAt: now,
-        updatedAt: now
-      };
+      
+      // Handle the union type properly by checking the type field
+      let fullTurn: TurnRecord;
+      if (turn.type === 'user') {
+        fullTurn = {
+          ...turn,
+          id,
+          createdAt: now,
+          updatedAt: now
+        } as UserTurnRecord;
+      } else if (turn.type === 'ai') {
+        // Ensure AI turn has required properties
+        const aiTurn = turn as Omit<AiTurnRecord, 'id' | 'createdAt' | 'updatedAt'>;
+        fullTurn = {
+          ...aiTurn,
+          id,
+          createdAt: now,
+          updatedAt: now,
+          // Provide defaults for required AI turn properties if missing
+          userTurnId: aiTurn.userTurnId || '',
+          batchResponseCount: aiTurn.batchResponseCount || 0,
+          synthesisResponseCount: aiTurn.synthesisResponseCount || 0,
+          ensembleResponseCount: aiTurn.ensembleResponseCount || 0
+        } as AiTurnRecord;
+      } else {
+        throw new Error(`Invalid turn type: ${(turn as any).type}`);
+      }
+      
       await this.repositories!.turns.add(fullTurn);
       return fullTurn;
     });
@@ -285,11 +311,11 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
       if (!existing) {
         throw new Error(`Turn ${id} not found`);
       }
-      const updated = {
+      const updated: TurnRecord = {
         ...existing,
         ...updates,
         updatedAt: Date.now()
-      };
+      } as TurnRecord;
       await this.repositories!.turns.put(updated);
       return updated;
     });
@@ -298,7 +324,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteTurn(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.turns.delete(id);
+      await this.repositories!.turns.delete(id);
+      return true;
     });
   }
 
@@ -360,7 +387,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteProviderResponse(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.providerResponses.delete(id);
+      await this.repositories!.providerResponses.delete(id);
+      return true;
     });
   }
 
@@ -422,7 +450,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteDocument(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.documents.delete(id);
+      await this.repositories!.documents.delete(id);
+      return true;
     });
   }
 
@@ -484,7 +513,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteCanvasBlock(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.canvasBlocks.delete(id);
+      await this.repositories!.canvasBlocks.delete(id);
+      return true;
     });
   }
 
@@ -527,7 +557,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteGhost(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.ghosts.delete(id);
+      await this.repositories!.ghosts.delete(id);
+      return true;
     });
   }
 
@@ -589,7 +620,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteProviderContext(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.providerContexts.delete(id);
+      await this.repositories!.providerContexts.delete(id);
+      return true;
     });
   }
 
@@ -651,7 +683,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async deleteMetadata(id: string): Promise<boolean> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      return this.repositories!.metadata.delete(id);
+      await this.repositories!.metadata.delete(id);
+      return true;
     });
   }
 
@@ -889,8 +922,12 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
           // Cleanup old sessions (older than 30 days)
           await this.repositories.sessions.cleanupOldSessions(30);
           
-          // Cleanup old turns (older than 90 days)
-          await this.repositories.turns.deleteOldTurns(90);
+          // Cleanup old turns (older than 90 days) - need to get all threads and clean each
+          const allThreads = await this.repositories.threads.getAll();
+          const cutoffDate = new Date(Date.now() - (90 * 24 * 60 * 60 * 1000));
+          for (const thread of allThreads) {
+            await this.repositories.turns.deleteOldTurns(thread.id, cutoffDate);
+          }
           
           // Cleanup failed provider responses (older than 7 days)
           await this.repositories.providerResponses.cleanupFailedResponses(7);
@@ -898,8 +935,19 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
           // Cleanup old ghosts (older than 60 days)
           await this.repositories.ghosts.cleanupOldGhosts(60);
           
-          // Cleanup orphaned metadata
-          await this.repositories.metadata.cleanupOrphanedMetadata();
+          // Cleanup orphaned metadata - need to collect valid entity IDs
+          const validEntityIds = new Set<string>();
+          const sessions = await this.repositories.sessions.getAll();
+          const threads = await this.repositories.threads.getAll();
+          const turns = await this.repositories.turns.getAll();
+          const documents = await this.repositories.documents.getAll();
+          
+          sessions.forEach(s => validEntityIds.add(s.id));
+          threads.forEach(t => validEntityIds.add(t.id));
+          turns.forEach(t => validEntityIds.add(t.id));
+          documents.forEach(d => validEntityIds.add(d.id));
+          
+          await this.repositories.metadata.cleanupOrphanedMetadata(validEntityIds);
         }
       } catch (error) {
         console.error('Error during cleanup:', error);

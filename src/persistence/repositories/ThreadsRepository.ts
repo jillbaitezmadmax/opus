@@ -1,7 +1,7 @@
 // Threads Repository - Manages thread records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { ThreadRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { ThreadRecord } from '../types';
 
 export class ThreadsRepository extends BaseRepository<ThreadRecord> {
   constructor(db: IDBDatabase) {
@@ -105,7 +105,7 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
     let totalTurns = 0;
     threads.forEach(thread => {
       stats.bySessions[thread.sessionId] = (stats.bySessions[thread.sessionId] || 0) + 1;
-      totalTurns += thread.turnCount;
+      totalTurns += thread.turnCount || 0;
     });
 
     stats.averageTurns = threads.length > 0 ? totalTurns / threads.length : 0;
@@ -119,7 +119,7 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
   async incrementTurnCount(threadId: string): Promise<void> {
     const thread = await this.get(threadId);
     if (thread) {
-      thread.turnCount += 1;
+      thread.turnCount = (thread.turnCount || 0) + 1;
       thread.updatedAt = Date.now();
       await this.put(thread);
     }
@@ -131,8 +131,8 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
   async getActiveConversations(minTurns: number = 5): Promise<ThreadRecord[]> {
     const allThreads = await this.getAll();
     return allThreads
-      .filter(thread => thread.isActive && thread.turnCount >= minTurns)
-      .sort((a, b) => b.turnCount - a.turnCount);
+      .filter(thread => thread.isActive && (thread.turnCount || 0) >= minTurns)
+      .sort((a, b) => (b.turnCount || 0) - (a.turnCount || 0));
   }
 
   /**
@@ -172,6 +172,10 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
     offset: number = 0, 
     limit: number = 20
   ): Promise<{ threads: ThreadRecord[]; hasMore: boolean }> {
-    return this.getPaginated('sessionId', sessionId, offset, limit);
+    const result = await this.getPaginated('sessionId', sessionId, offset, limit);
+    return {
+      threads: result.records,
+      hasMore: result.hasMore
+    };
   }
 }

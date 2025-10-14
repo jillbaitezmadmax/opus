@@ -119,12 +119,14 @@ export class ProvenanceQueries {
 
     // Get historical changes
     const ghosts = await this.repositories.ghosts.getByEntityId(entityId);
-    trace.history = ghosts.map(ghost => ({
-      timestamp: ghost.timestamp,
-      operation: ghost.operation,
-      changes: ghost.afterState,
-      metadata: ghost.metadata
-    })).sort((a, b) => b.timestamp - a.timestamp);
+    trace.history = ghosts
+      .filter(ghost => ghost.timestamp !== undefined && ghost.operation !== undefined)
+      .map(ghost => ({
+        timestamp: ghost.timestamp!,
+        operation: ghost.operation!,
+        changes: ghost.state,
+        metadata: ghost.metadata
+      })).sort((a, b) => b.timestamp - a.timestamp);
 
     // Build relationships based on entity type
     switch (entityType) {
@@ -315,22 +317,34 @@ export class ProvenanceQueries {
     let ghosts: GhostRecord[] = [];
     if (filter.sessionId) {
       ghosts = await this.repositories.ghosts.getBySessionId(filter.sessionId);
+    } else if (filter.userId) {
+      // Get recent sessions for the user and then get ghosts
+      const recentSessions = await this.repositories.sessions.getRecentByUserId(filter.userId, 10);
+      if (recentSessions.length > 0) {
+        ghosts = await this.repositories.ghosts.getRecentActivity(recentSessions[0].id, limit * 2);
+      }
     } else {
-      // Get recent ghosts if no specific filter
-      ghosts = await this.repositories.ghosts.getRecentActivity(limit * 2);
+      // Get all sessions and pick the most recent one
+      const allSessions = await this.repositories.sessions.getAll();
+      const sortedSessions = allSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+      if (sortedSessions.length > 0) {
+        ghosts = await this.repositories.ghosts.getRecentActivity(sortedSessions[0].id, limit * 2);
+      }
     }
 
     // Convert ghosts to activity entries
-    ghosts.forEach(ghost => {
-      activities.push({
-        timestamp: ghost.timestamp,
-        entityId: ghost.entityId,
-        entityType: ghost.entityType,
-        operation: ghost.operation,
-        sessionId: ghost.sessionId,
-        metadata: ghost.metadata
+    ghosts
+      .filter(ghost => ghost.timestamp !== undefined && ghost.operation !== undefined && ghost.entityId !== undefined && ghost.entityType !== undefined)
+      .forEach(ghost => {
+        activities.push({
+          timestamp: ghost.timestamp!,
+          entityId: ghost.entityId!,
+          entityType: ghost.entityType!,
+          operation: ghost.operation!,
+          sessionId: ghost.sessionId,
+          metadata: ghost.metadata
+        });
       });
-    });
 
     // Add creation activities from main entities
     if (filter.sessionId) {
@@ -347,8 +361,7 @@ export class ProvenanceQueries {
           entityId: thread.id,
           entityType: 'thread',
           operation: 'create',
-          sessionId: thread.sessionId,
-          userId: thread.userId
+          sessionId: thread.sessionId
         });
       });
 
@@ -360,8 +373,7 @@ export class ProvenanceQueries {
           entityType: 'turn',
           operation: 'create',
           sessionId: turn.sessionId,
-          threadId: turn.threadId,
-          userId: turn.userId
+          threadId: turn.threadId
         });
       });
 
@@ -372,8 +384,7 @@ export class ProvenanceQueries {
           entityId: doc.id,
           entityType: 'document',
           operation: 'create',
-          sessionId: doc.sessionId,
-          userId: doc.userId
+          sessionId: doc.sessionId || doc.sourceSessionId || ''
         });
       });
     }
@@ -419,12 +430,12 @@ export class ProvenanceQueries {
     // Find provider responses without valid turns
     const allResponses = await this.repositories.providerResponses.getAll();
     for (const response of allResponses) {
-      const turn = await this.repositories.turns.get(response.turnId);
+      const turn = await this.repositories.turns.get(response.aiTurnId);
       if (!turn) {
         orphans.push({
           id: response.id,
           type: 'providerResponse',
-          reason: `References non-existent turn ${response.turnId}`
+          reason: `References non-existent turn ${response.aiTurnId}`
         });
       }
     }
@@ -609,14 +620,17 @@ export class ProvenanceQueries {
 
   private async buildDocumentProvenance(trace: ProvenanceTrace, document: DocumentRecord): Promise<void> {
     // Parent: session
-    const session = await this.repositories.sessions.get(document.sessionId);
-    if (session) {
-      trace.parents.push({
-        id: session.id,
-        type: 'session',
-        relationship: 'belongsTo',
-        data: session
-      });
+    const sessionId = document.sessionId || document.sourceSessionId;
+    if (sessionId) {
+      const session = await this.repositories.sessions.get(sessionId);
+      if (session) {
+        trace.parents.push({
+          id: session.id,
+          type: 'session',
+          relationship: 'belongsTo',
+          data: session
+        });
+      }
     }
 
     // Children: canvas blocks
@@ -643,7 +657,9 @@ export class ProvenanceQueries {
       });
 
       // Grandparent: session
-      const session = await this.repositories.sessions.get(document.sessionId);
+      const sessionId = document.sessionId || document.sourceSessionId;
+    if (sessionId) {
+      const session = await this.repositories.sessions.get(sessionId);
       if (session) {
         trace.parents.push({
           id: session.id,
@@ -651,6 +667,7 @@ export class ProvenanceQueries {
           relationship: 'belongsTo',
           data: session
         });
+      }
       }
     }
 

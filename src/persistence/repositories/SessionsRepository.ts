@@ -1,7 +1,7 @@
 // Sessions Repository - Manages session records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { SessionRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { SessionRecord } from '../types';
 
 export class SessionsRepository extends BaseRepository<SessionRecord> {
   constructor(db: IDBDatabase) {
@@ -77,7 +77,9 @@ export class SessionsRepository extends BaseRepository<SessionRecord> {
     };
 
     sessions.forEach(session => {
-      stats.byProvider[session.provider] = (stats.byProvider[session.provider] || 0) + 1;
+      if (session.provider) {
+        stats.byProvider[session.provider] = (stats.byProvider[session.provider] || 0) + 1;
+      }
     });
 
     return stats;

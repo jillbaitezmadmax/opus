@@ -1,0 +1,201 @@
+[{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/adapters/index.ts",
+	"owner": "typescript",
+	"code": "2304",
+	"severity": 8,
+	"message": "Cannot find name 'IPersistenceAdapter'.",
+	"source": "ts",
+	"startLineNumber": 16,
+	"startColumn": 76,
+	"endLineNumber": 16,
+	"endColumn": 95,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/adapters/index.ts",
+	"owner": "typescript",
+	"code": "2304",
+	"severity": 8,
+	"message": "Cannot find name 'IndexedDBAdapter'.",
+	"source": "ts",
+	"startLineNumber": 19,
+	"startColumn": 18,
+	"endLineNumber": 19,
+	"endColumn": 34,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/index.ts",
+	"owner": "typescript",
+	"code": "7016",
+	"severity": 8,
+	"message": "Could not find a declaration file for module './SessionManager.js'. 'c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/SessionManager.js' implicitly has an 'any' type.",
+	"source": "ts",
+	"startLineNumber": 27,
+	"startColumn": 15,
+	"endLineNumber": 27,
+	"endColumn": 36,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2339",
+	"severity": 8,
+	"message": "Property 'getRecent' does not exist on type 'SessionsRepository'.",
+	"source": "ts",
+	"startLineNumber": 322,
+	"startColumn": 63,
+	"endLineNumber": 322,
+	"endColumn": 72,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2339",
+	"severity": 8,
+	"message": "Property 'userId' does not exist on type 'DocumentRecord'.",
+	"source": "ts",
+	"startLineNumber": 383,
+	"startColumn": 23,
+	"endLineNumber": 383,
+	"endColumn": 29,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2551",
+	"severity": 8,
+	"message": "Property 'turnId' does not exist on type 'ProviderResponseRecord'. Did you mean 'aiTurnId'?",
+	"source": "ts",
+	"startLineNumber": 429,
+	"startColumn": 63,
+	"endLineNumber": 429,
+	"endColumn": 69,
+	"relatedInformation": [
+		{
+			"startLineNumber": 99,
+			"startColumn": 3,
+			"endLineNumber": 99,
+			"endColumn": 11,
+			"message": "'aiTurnId' is declared here.",
+			"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/types.ts"
+		}
+	],
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2551",
+	"severity": 8,
+	"message": "Property 'turnId' does not exist on type 'ProviderResponseRecord'. Did you mean 'aiTurnId'?",
+	"source": "ts",
+	"startLineNumber": 434,
+	"startColumn": 60,
+	"endLineNumber": 434,
+	"endColumn": 66,
+	"relatedInformation": [
+		{
+			"startLineNumber": 99,
+			"startColumn": 3,
+			"endLineNumber": 99,
+			"endColumn": 11,
+			"message": "'aiTurnId' is declared here.",
+			"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/types.ts"
+		}
+	],
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2345",
+	"severity": 8,
+	"message": "Argument of type 'string | undefined' is not assignable to parameter of type 'string | number | string[]'.\n  Type 'undefined' is not assignable to type 'string | number | string[]'.",
+	"source": "ts",
+	"startLineNumber": 619,
+	"startColumn": 58,
+	"endLineNumber": 619,
+	"endColumn": 76,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/queries/ProvenanceQueries.ts",
+	"owner": "typescript",
+	"code": "2345",
+	"severity": 8,
+	"message": "Argument of type 'string | undefined' is not assignable to parameter of type 'string | number | string[]'.\n  Type 'undefined' is not assignable to type 'string | number | string[]'.",
+	"source": "ts",
+	"startLineNumber": 653,
+	"startColumn": 60,
+	"endLineNumber": 653,
+	"endColumn": 78,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/CanvasBlocksRepository.ts",
+	"owner": "typescript",
+	"code": "2538",
+	"severity": 8,
+	"message": "Type 'undefined' cannot be used as an index type.",
+	"source": "ts",
+	"startLineNumber": 316,
+	"startColumn": 20,
+	"endLineNumber": 316,
+	"endColumn": 30,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/CanvasBlocksRepository.ts",
+	"owner": "typescript",
+	"code": "2538",
+	"severity": 8,
+	"message": "Type 'undefined' cannot be used as an index type.",
+	"source": "ts",
+	"startLineNumber": 316,
+	"startColumn": 48,
+	"endLineNumber": 316,
+	"endColumn": 58,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/TurnsRepository.ts",
+	"owner": "typescript",
+	"code": "2345",
+	"severity": 8,
+	"message": "Argument of type 'number | undefined' is not assignable to parameter of type 'number'.\n  Type 'undefined' is not assignable to type 'number'.",
+	"source": "ts",
+	"startLineNumber": 76,
+	"startColumn": 40,
+	"endLineNumber": 76,
+	"endColumn": 69,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/TurnsRepository.ts",
+	"owner": "typescript",
+	"code": "18048",
+	"severity": 8,
+	"message": "'turn.content' is possibly 'undefined'.",
+	"source": "ts",
+	"startLineNumber": 93,
+	"startColumn": 7,
+	"endLineNumber": 93,
+	"endColumn": 19,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/TurnsRepository.ts",
+	"owner": "typescript",
+	"code": "18048",
+	"severity": 8,
+	"message": "'turn.content' is possibly 'undefined'.",
+	"source": "ts",
+	"startLineNumber": 128,
+	"startColumn": 59,
+	"endLineNumber": 128,
+	"endColumn": 71,
+	"extensionID": "vscode.typescript-language-features"
+},{
+	"resource": "/c:/Users/Mahdi/projects/opus-deus-mainfixing/src/persistence/repositories/TurnsRepository.ts",
+	"owner": "typescript",
+	"code": "2538",
+	"severity": 8,
+	"message": "Type 'null' cannot be used as an index type.",
+	"source": "ts",
+	"startLineNumber": 160,
+	"startColumn": 20,
+	"endLineNumber": 160,
+	"endColumn": 21,
+	"extensionID": "vscode.typescript-language-features"
+}]

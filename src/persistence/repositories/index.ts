@@ -1,15 +1,26 @@
 // Repository Index - Exports all repository classes
 
-export { BaseRepository } from '../BaseRepository.js';
-export { SessionsRepository } from './SessionsRepository.js';
-export { ThreadsRepository } from './ThreadsRepository.js';
-export { TurnsRepository } from './TurnsRepository.js';
-export { ProviderResponsesRepository } from './ProviderResponsesRepository.js';
-export { DocumentsRepository } from './DocumentsRepository.js';
-export { CanvasBlocksRepository } from './CanvasBlocksRepository.js';
-export { GhostsRepository } from './GhostsRepository.js';
-export { ProviderContextsRepository } from './ProviderContextsRepository.js';
-export { MetadataRepository } from './MetadataRepository.js';
+import { BaseRepository } from '../BaseRepository';
+import { SessionsRepository } from './SessionsRepository';
+import { ThreadsRepository } from './ThreadsRepository';
+import { TurnsRepository } from './TurnsRepository';
+import { ProviderResponsesRepository } from './ProviderResponsesRepository';
+import { DocumentsRepository } from './DocumentsRepository';
+import { CanvasBlocksRepository } from './CanvasBlocksRepository';
+import { GhostsRepository } from './GhostsRepository';
+import { ProviderContextsRepository } from './ProviderContextsRepository';
+import { MetadataRepository } from './MetadataRepository';
+
+export { BaseRepository } from '../BaseRepository';
+export { SessionsRepository } from './SessionsRepository';
+export { ThreadsRepository } from './ThreadsRepository';
+export { TurnsRepository } from './TurnsRepository';
+export { ProviderResponsesRepository } from './ProviderResponsesRepository';
+export { DocumentsRepository } from './DocumentsRepository';
+export { CanvasBlocksRepository } from './CanvasBlocksRepository';
+export { GhostsRepository } from './GhostsRepository';
+export { ProviderContextsRepository } from './ProviderContextsRepository';
+export { MetadataRepository } from './MetadataRepository';
 
 // Repository collection type for dependency injection
 export interface RepositoryCollection {

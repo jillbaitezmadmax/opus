@@ -1,8 +1,7 @@
 // Document Manager - Handles document persistence with Slate content decomposition
-// Integrates with the persistence adapter to manage documents, canvas blocks, and ghosts
+// Integrates with repositories to manage documents, canvas blocks, and ghosts
 
 import { v4 as uuidv4 } from 'uuid';
-import type { IPersistenceAdapter } from './adapters/IPersistenceAdapter.js';
 import type { 
   DocumentRecord, 
   CanvasBlockRecord, 
@@ -11,6 +10,12 @@ import type {
   TurnRecord,
   ProviderResponseRecord
 } from './types.js';
+import type { DocumentsRepository } from './repositories/DocumentsRepository.js';
+import type { CanvasBlocksRepository } from './repositories/CanvasBlocksRepository.js';
+import type { GhostsRepository } from './repositories/GhostsRepository.js';
+import type { SessionsRepository } from './repositories/SessionsRepository.js';
+import type { TurnsRepository } from './repositories/TurnsRepository.js';
+import type { ProviderResponsesRepository } from './repositories/ProviderResponsesRepository.js';
 
 // Slate.js types for content decomposition
 interface SlateNode {
@@ -69,12 +74,30 @@ export interface DocumentManagerConfig {
 }
 
 export class DocumentManager {
-  private adapter: IPersistenceAdapter;
+  private documentsRepo: DocumentsRepository;
+  private canvasBlocksRepo: CanvasBlocksRepository;
+  private ghostsRepo: GhostsRepository;
+  private sessionsRepo: SessionsRepository;
+  private turnsRepo: TurnsRepository;
+  private providerResponsesRepo: ProviderResponsesRepository;
   private config: DocumentManagerConfig;
   private autoSaveTimers: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(adapter: IPersistenceAdapter, config: DocumentManagerConfig = {}) {
-    this.adapter = adapter;
+  constructor(
+    documentsRepo: DocumentsRepository,
+    canvasBlocksRepo: CanvasBlocksRepository,
+    ghostsRepo: GhostsRepository,
+    sessionsRepo: SessionsRepository,
+    turnsRepo: TurnsRepository,
+    providerResponsesRepo: ProviderResponsesRepository,
+    config: DocumentManagerConfig = {}
+  ) {
+    this.documentsRepo = documentsRepo;
+    this.canvasBlocksRepo = canvasBlocksRepo;
+    this.ghostsRepo = ghostsRepo;
+    this.sessionsRepo = sessionsRepo;
+    this.turnsRepo = turnsRepo;
+    this.providerResponsesRepo = providerResponsesRepo;
     this.config = {
       autoSaveInterval: 2000,
       maxSnapshots: 10,
@@ -103,6 +126,7 @@ export class DocumentManager {
       granularity: 'paragraph',
       isDirty: false,
       createdAt: now,
+      updatedAt: now,
       lastModified: now,
       version: 1,
       blockCount: initialContent ? this.countBlocks(initialContent) : 0,
@@ -112,7 +136,7 @@ export class DocumentManager {
     };
 
     // Save document
-    await this.adapter.createDocument(document);
+    await this.documentsRepo.put(document);
 
     // Decompose content into blocks if enabled
     if (this.config.enableAutoDecomposition && initialContent) {
@@ -126,12 +150,12 @@ export class DocumentManager {
    * Load a document with optional content reconstruction
    */
   async loadDocument(documentId: string, includeBlocks: boolean = false): Promise<DocumentRecord | null> {
-    const document = await this.adapter.getDocument(documentId);
+    const document = await this.documentsRepo.get(documentId);
     if (!document) return null;
 
     if (includeBlocks) {
       // Reconstruct content from blocks if needed
-      const blocks = await this.adapter.getCanvasBlocksByDocumentId(documentId);
+      const blocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
       if (blocks.length > 0) {
         document.canvasContent = await this.reconstructContent(blocks);
       }
@@ -148,7 +172,7 @@ export class DocumentManager {
     updates: Partial<DocumentRecord>,
     content?: SlateDescendant[]
   ): Promise<DocumentRecord> {
-    const existingDoc = await this.adapter.getDocument(documentId);
+    const existingDoc = await this.documentsRepo.get(documentId);
     if (!existingDoc) {
       throw new Error(`Document ${documentId} not found`);
     }
@@ -158,80 +182,73 @@ export class DocumentManager {
       ...existingDoc,
       ...updates,
       lastModified: now,
+      updatedAt: now,
       version: existingDoc.version + 1,
       isDirty: false
     };
 
-    // Update content if provided
+    // Handle content updates
     if (content) {
       updatedDocument.canvasContent = content;
       updatedDocument.blockCount = this.countBlocks(content);
-
-      // Decompose content into blocks
+      
+      // Decompose content if enabled
       if (this.config.enableAutoDecomposition) {
         await this.decomposeContent(documentId, content);
       }
     }
 
-    // Create snapshot if significant changes
+    // Create snapshot if needed
     if (this.shouldCreateSnapshot(existingDoc, updatedDocument)) {
-      await this.createSnapshot(documentId, updatedDocument);
+      await this.createSnapshot(documentId, existingDoc);
     }
 
-    await this.adapter.updateDocument(documentId, updatedDocument);
+    await this.documentsRepo.put(updatedDocument);
     return updatedDocument;
   }
 
   /**
-   * Delete document and all associated blocks and ghosts
+   * Delete a document and all associated data
    */
   async deleteDocument(documentId: string): Promise<void> {
-    // Get all associated blocks and ghosts
+    // Delete associated data first
     const [blocks, ghosts] = await Promise.all([
-      this.adapter.getCanvasBlocksByDocumentId(documentId),
-      this.adapter.getGhostsByDocumentId(documentId)
+      this.canvasBlocksRepo.getByDocumentId(documentId),
+      this.ghostsRepo.getByDocumentId(documentId)
     ]);
 
-    // Delete in transaction
-    await this.adapter.transaction(async () => {
-      // Delete blocks
-      for (const block of blocks) {
-        await this.adapter.deleteCanvasBlock(block.id);
-      }
+    // Delete blocks
+    for (const block of blocks) {
+      await this.canvasBlocksRepo.delete(block.id);
+    }
 
-      // Delete ghosts
-      for (const ghost of ghosts) {
-        await this.adapter.deleteGhost(ghost.id);
-      }
+    // Delete ghosts
+    for (const ghost of ghosts) {
+      await this.ghostsRepo.delete(ghost.id);
+    }
 
-      // Delete document
-      await this.adapter.deleteDocument(documentId);
-    });
+    // Delete the document itself
+    await this.documentsRepo.delete(documentId);
   }
 
   /**
    * Decompose Slate content into canvas blocks
    */
   private async decomposeContent(documentId: string, content: SlateDescendant[]): Promise<void> {
-    // Clear existing blocks for this document
-    const existingBlocks = await this.adapter.getCanvasBlocksByDocumentId(documentId);
+    // Clear existing blocks
+    const existingBlocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
     for (const block of existingBlocks) {
-      await this.adapter.deleteCanvasBlock(block.id);
+      await this.canvasBlocksRepo.delete(block.id);
     }
 
     // Create new blocks
-    const blocks: CanvasBlockRecord[] = [];
     let order = 0;
-
     for (const node of content) {
-      const blockRecords = await this.nodeToBlocks(documentId, node, order);
-      blocks.push(...blockRecords);
-      order += blockRecords.length;
-    }
-
-    // Save all blocks
-    for (const block of blocks) {
-      await this.adapter.createCanvasBlock(block);
+      const blocks = await this.nodeToBlocks(documentId, node, order);
+      for (const block of blocks) {
+        await this.canvasBlocksRepo.put(block);
+      }
+      order += blocks.length;
     }
   }
 
@@ -334,25 +351,37 @@ export class DocumentManager {
       textRange?: [number, number];
     }
   ): Promise<GhostRecord> {
-    const ghostId = uuidv4();
-    const now = Date.now();
+    // Check for existing ghost with same provenance
+    const existingGhosts = await this.ghostsRepo.getByEntityId(provenance.aiTurnId);
+    const duplicate = existingGhosts.find((ghost: GhostRecord) => 
+      ghost.documentId === documentId &&
+      ghost.provenance?.providerId === provenance.providerId &&
+      ghost.provenance?.responseIndex === provenance.responseIndex
+    );
 
-    // Get current ghost count for ordering
-    const existingGhosts = await this.adapter.getGhostsByDocumentId(documentId);
-    const order = existingGhosts.length;
+    if (duplicate) {
+      return duplicate;
+    }
 
     const ghost: GhostRecord = {
-      id: ghostId,
+      id: uuidv4(),
       documentId,
       text,
-      preview: text.substring(0, 200),
-      provenance,
-      order,
-      createdAt: now,
+      preview: text.substring(0, 100),
+      provenance: {
+        sessionId: provenance.sessionId,
+        aiTurnId: provenance.aiTurnId,
+        providerId: provenance.providerId,
+        responseType: provenance.responseType,
+        responseIndex: provenance.responseIndex
+      },
+      order: 0,
+      createdAt: Date.now(),
+      timestamp: Date.now(),
       isPinned: false
     };
 
-    await this.adapter.createGhost(ghost);
+    await this.ghostsRepo.put(ghost);
     return ghost;
   }
 
@@ -360,12 +389,11 @@ export class DocumentManager {
    * Get all ghosts for a document
    */
   async getDocumentGhosts(documentId: string): Promise<GhostRecord[]> {
-    const ghosts = await this.adapter.getGhostsByDocumentId(documentId);
-    return ghosts.sort((a, b) => a.order - b.order);
+    return this.ghostsRepo.getByEntityId(documentId);
   }
 
   /**
-   * Create a document snapshot
+   * Create a snapshot of the document
    */
   async createSnapshot(documentId: string, document: DocumentRecord, label?: string): Promise<void> {
     const snapshot: DocumentSnapshot = {
@@ -377,16 +405,16 @@ export class DocumentManager {
     };
 
     // Add to snapshots array
-    const updatedSnapshots = [...document.snapshots, snapshot];
-
-    // Limit snapshots
-    if (updatedSnapshots.length > (this.config.maxSnapshots || 10)) {
-      updatedSnapshots.shift(); // Remove oldest
+    const snapshots = [...(document.snapshots || []), snapshot];
+    
+    // Keep only the most recent snapshots
+    if (snapshots.length > this.config.maxSnapshots!) {
+      snapshots.splice(0, snapshots.length - this.config.maxSnapshots!);
     }
 
-    await this.adapter.updateDocument(documentId, {
+    await this.documentsRepo.put({
       ...document,
-      snapshots: updatedSnapshots
+      snapshots
     });
   }
 
@@ -398,31 +426,34 @@ export class DocumentManager {
     turns: TurnRecord[];
     responses: ProviderResponseRecord[];
   }> {
-    const blocks = await this.adapter.getCanvasBlocksByDocumentId(documentId);
+    const blocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
     
+    // Extract unique session and turn IDs
     const sessionIds = new Set<string>();
     const turnIds = new Set<string>();
-    const responseKeys = new Set<string>();
-
-    // Collect unique identifiers
-    for (const block of blocks) {
-      if (block.provenance) {
-        sessionIds.add(block.provenance.sessionId);
-        turnIds.add(block.provenance.aiTurnId);
-        responseKeys.add(`${block.provenance.aiTurnId}-${block.provenance.providerId}-${block.provenance.responseType}-${block.provenance.responseIndex}`);
+    
+    blocks.forEach((block: CanvasBlockRecord) => {
+      if (block.metadata?.provenance) {
+        sessionIds.add(block.metadata.provenance.sessionId);
+        turnIds.add(block.metadata.provenance.aiTurnId);
       }
-    }
+    });
 
     // Fetch related records
-    const [sessions, turns, responses] = await Promise.all([
-      Promise.all(Array.from(sessionIds).map(id => this.adapter.getSession(id))).then(results => 
-        results.filter(Boolean) as SessionRecord[]
+    const [sessions, turns] = await Promise.all([
+      Promise.all(Array.from(sessionIds).map((id: string) => this.sessionsRepo.get(id))).then((results: (SessionRecord | null)[]) =>
+        results.filter((s: SessionRecord | null): s is SessionRecord => s !== null)
       ),
-      Promise.all(Array.from(turnIds).map(id => this.adapter.getTurn(id))).then(results => 
-        results.filter(Boolean) as TurnRecord[]
-      ),
-      this.getResponsesByKeys(Array.from(responseKeys))
+      Promise.all(Array.from(turnIds).map((id: string) => this.turnsRepo.get(id))).then((results: (TurnRecord | null)[]) =>
+        results.filter((t: TurnRecord | null): t is TurnRecord => t !== null)
+      )
     ]);
+
+    // Get provider responses for the turns
+    const responseKeys = turns.flatMap((turn: TurnRecord) => 
+      turn.providerResponseIds?.map((id: string) => id) || []
+    );
+    const responses = await this.getResponsesByKeys(responseKeys);
 
     return { sessions, turns, responses };
   }
@@ -502,14 +533,10 @@ export class DocumentManager {
     const responses: ProviderResponseRecord[] = [];
     
     for (const key of keys) {
-      const [aiTurnId, providerId, responseType, responseIndex] = key.split('-');
       try {
-        const response = await this.adapter.getProviderResponseByCompoundKey(
-          aiTurnId,
-          providerId,
-          responseType as any,
-          parseInt(responseIndex)
-        );
+        // Parse compound key: sessionId|turnId|providerId|responseIndex
+        const [sessionId, turnId, providerId, responseIndex] = key.split('|');
+        const response = await this.providerResponsesRepo.getByCompoundKey(key);
         if (response) {
           responses.push(response);
         }
@@ -517,7 +544,7 @@ export class DocumentManager {
         console.warn(`Failed to fetch response for key ${key}:`, error);
       }
     }
-
+    
     return responses;
   }
 
@@ -537,8 +564,21 @@ export class DocumentManager {
  * Factory function to create a document manager
  */
 export function createDocumentManager(
-  adapter: IPersistenceAdapter,
+  documentsRepo: DocumentsRepository,
+  canvasBlocksRepo: CanvasBlocksRepository,
+  ghostsRepo: GhostsRepository,
+  sessionsRepo: SessionsRepository,
+  turnsRepo: TurnsRepository,
+  providerResponsesRepo: ProviderResponsesRepository,
   config?: DocumentManagerConfig
 ): DocumentManager {
-  return new DocumentManager(adapter, config);
+  return new DocumentManager(
+    documentsRepo,
+    canvasBlocksRepo,
+    ghostsRepo,
+    sessionsRepo,
+    turnsRepo,
+    providerResponsesRepo,
+    config
+  );
 }

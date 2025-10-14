@@ -1,7 +1,7 @@
-// Turns Repository - Manages turn records in conversations
+// Turns Repository - Manages turn records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { TurnRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { TurnRecord } from '../types';
 
 export class TurnsRepository extends BaseRepository<TurnRecord> {
   constructor(db: IDBDatabase) {
@@ -13,7 +13,7 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
    */
   async getByThreadId(threadId: string): Promise<TurnRecord[]> {
     const turns = await this.getByIndex('threadId', threadId);
-    return turns.sort((a, b) => a.sequence - b.sequence);
+    return turns.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
   }
 
   /**
@@ -61,7 +61,11 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
     offset: number = 0,
     limit: number = 50
   ): Promise<{ turns: TurnRecord[]; hasMore: boolean }> {
-    return this.getPaginated('threadId', threadId, offset, limit);
+    const result = await this.getPaginated('threadId', threadId, offset, limit);
+    return {
+      turns: result.records,
+      hasMore: result.hasMore
+    };
   }
 
   /**
@@ -69,7 +73,7 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
    */
   async getNextSequence(threadId: string): Promise<number> {
     const turns = await this.getByThreadId(threadId);
-    return turns.length > 0 ? Math.max(...turns.map(t => t.sequence)) + 1 : 1;
+    return turns.length > 0 ? Math.max(...turns.map(t => t.sequence || 0)) + 1 : 1;
   }
 
   /**
@@ -86,7 +90,7 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
     }
 
     return turns.filter(turn => 
-      turn.content.toLowerCase().includes(searchQuery)
+      (turn.content || '').toLowerCase().includes(searchQuery)
     );
   }
 
@@ -121,7 +125,7 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
       totalLength: 0
     };
 
-    stats.totalLength = turns.reduce((sum, turn) => sum + turn.content.length, 0);
+    stats.totalLength = turns.reduce((sum, turn) => sum + (turn.content || '').length, 0);
     stats.averageLength = stats.total > 0 ? stats.totalLength / stats.total : 0;
 
     return stats;
@@ -152,10 +156,10 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
       threadCounts[turn.threadId] = (threadCounts[turn.threadId] || 0) + 1;
     });
 
-    const mostActiveThread = Object.keys(threadCounts).reduce((a, b) => 
-      threadCounts[a] > threadCounts[b] ? a : b, 
-      Object.keys(threadCounts)[0] || null
-    );
+    const threadEntries = Object.entries(threadCounts);
+const mostActiveThread = threadEntries.length > 0
+  ? threadEntries.reduce((a, b) => (a[1] > b[1] ? a : b))[0]
+  : null;
 
     return {
       totalTurns: turns.length,

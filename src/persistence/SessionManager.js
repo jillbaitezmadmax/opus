@@ -31,6 +31,18 @@ export class SessionManager {
   }
 
   /**
+   * Initialize the session manager
+   */
+  async initialize() {
+    if (this.usePersistenceAdapter) {
+      await this.initializePersistenceLayer();
+    } else if (this.isExtensionContext) {
+      await this.loadSessions();
+    }
+    console.log('[SessionManager] Initialization complete');
+  }
+
+  /**
    * Initialize the new persistence layer
    */
   async initializePersistenceLayer() {

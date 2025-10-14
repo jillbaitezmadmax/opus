@@ -1,14 +1,24 @@
 // Persistence Adapters Index
 
+import type {
+  IPersistenceAdapter,
+  PersistenceConfig,
+  QueryOptions,
+  BatchResult,
+  HealthStatus
+} from './IPersistenceAdapter';
+
+import { IndexedDBAdapter } from './IndexedDBAdapter';
+
 export type {
   IPersistenceAdapter,
   PersistenceConfig,
   QueryOptions,
   BatchResult,
   HealthStatus
-} from './IPersistenceAdapter.js';
+};
 
-export { IndexedDBAdapter } from './IndexedDBAdapter.js';
+export { IndexedDBAdapter };
 
 /**
  * Factory function to create a persistence adapter

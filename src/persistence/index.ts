@@ -57,7 +57,7 @@ export async function initializePersistenceLayer(
   const db = await openDatabase();
   
   // Create adapter
-  const adapter = createPersistenceAdapter('indexeddb', { database: db });
+  const adapter = createPersistenceAdapter('indexeddb');
   await adapter.initialize();
   
   // Create repositories
@@ -66,8 +66,16 @@ export async function initializePersistenceLayer(
   // Create query helpers
   const provenanceQueries = createProvenanceQueries(repositories);
   
-  // Create document manager
-  const documentManager = createDocumentManager(adapter, documentManagerConfig);
+  // Create document manager with all required repositories
+  const documentManager = createDocumentManager(
+    repositories.documents,
+    repositories.canvasBlocks,
+    repositories.ghosts,
+    repositories.sessions,
+    repositories.turns,
+    repositories.providerResponses,
+    documentManagerConfig
+  );
   
   return {
     adapter,
@@ -123,10 +131,18 @@ export async function getPersistenceHealth(): Promise<{
 
     // Try to open database
     const db = await openDatabase();
-    const databaseOpen = db.readyState === 'done';
+    
+    // Check if database is ready by attempting to create a transaction
+    let databaseOpen = false;
+    try {
+      const tx = db.transaction(['sessions'], 'readonly');
+      databaseOpen = tx !== null;
+    } catch (error) {
+      databaseOpen = false;
+    }
     
     // Create adapter and check readiness
-    const adapter = createPersistenceAdapter('indexeddb', { database: db });
+    const adapter = createPersistenceAdapter('indexeddb');
     await adapter.initialize();
     const adapterReady = await adapter.isReady();
     

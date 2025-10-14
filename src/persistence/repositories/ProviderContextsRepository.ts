@@ -1,7 +1,7 @@
 // Provider Contexts Repository - Manages provider context records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { ProviderContextRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { ProviderContextRecord } from '../types';
 
 export class ProviderContextsRepository extends BaseRepository<ProviderContextRecord> {
   constructor(db: IDBDatabase) {
@@ -50,7 +50,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
    */
   async getByProviderAndSession(provider: string, sessionId: string): Promise<ProviderContextRecord[]> {
     const sessionContexts = await this.getBySessionId(sessionId);
-    return sessionContexts.filter(context => context.provider === provider);
+    return sessionContexts.filter(context => context.providerId === provider);
   }
 
   /**
@@ -122,7 +122,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
     let totalSize = 0;
 
     contexts.forEach(context => {
-      stats.byProvider[context.provider] = (stats.byProvider[context.provider] || 0) + 1;
+      stats.byProvider[context.providerId] = (stats.byProvider[context.providerId] || 0) + 1;
       if (context.threadId) {
         stats.byThread[context.threadId] = (stats.byThread[context.threadId] || 0) + 1;
       }
@@ -283,7 +283,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
 
     // Filter by provider if sessionId was used but provider is also specified
     if (sessionId && provider) {
-      contexts = contexts.filter(c => c.provider === provider);
+      contexts = contexts.filter(c => c.providerId === provider);
     }
 
     // Filter by time range

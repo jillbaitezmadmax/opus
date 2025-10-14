@@ -1,7 +1,7 @@
-// Documents Repository - Manages document records and content
+// Documents Repository - Manages document records
 
-import { BaseRepository } from '../BaseRepository.js';
-import { DocumentRecord } from '../types.js';
+import { BaseRepository } from '../BaseRepository';
+import { DocumentRecord } from '../types';
 
 export class DocumentsRepository extends BaseRepository<DocumentRecord> {
   constructor(db: IDBDatabase) {
@@ -57,7 +57,7 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
     const query = contentQuery.toLowerCase();
     
     return allDocuments.filter(doc => 
-      doc.content.toLowerCase().includes(query)
+      doc.content && doc.content.toLowerCase().includes(query)
     );
   }
 
@@ -79,7 +79,11 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
     offset: number = 0,
     limit: number = 20
   ): Promise<{ documents: DocumentRecord[]; hasMore: boolean }> {
-    return this.getPaginated('sessionId', sessionId, offset, limit);
+    const result = await this.getPaginated('sessionId', sessionId, offset, limit);
+    return {
+      documents: result.records,
+      hasMore: result.hasMore
+    };
   }
 
   /**
@@ -139,9 +143,15 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
     };
 
     documents.forEach(doc => {
-      stats.byType[doc.type] = (stats.byType[doc.type] || 0) + 1;
-      stats.bySession[doc.sessionId] = (stats.bySession[doc.sessionId] || 0) + 1;
-      stats.totalSize += doc.content.length;
+      if (doc.type) {
+        stats.byType[doc.type] = (stats.byType[doc.type] || 0) + 1;
+      }
+      if (doc.sessionId) {
+        stats.bySession[doc.sessionId] = (stats.bySession[doc.sessionId] || 0) + 1;
+      }
+      if (doc.content) {
+        stats.totalSize += doc.content.length;
+      }
     });
 
     stats.averageSize = documents.length > 0 ? stats.totalSize / documents.length : 0;
@@ -156,6 +166,7 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
     const allDocuments = await this.getAll();
     
     return allDocuments.filter(doc => {
+      if (!doc.content) return false;
       const size = doc.content.length;
       return size >= minSize && (maxSize === undefined || size <= maxSize);
     });
@@ -181,8 +192,8 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
    */
   async getDocumentTypes(userId: string): Promise<string[]> {
     const documents = await this.getByUserId(userId);
-    const types = new Set(documents.map(doc => doc.type));
-    return Array.from(types);
+    const types = new Set(documents.map(doc => doc.type).filter(type => type !== undefined));
+    return Array.from(types) as string[];
   }
 
   /**
@@ -292,7 +303,7 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
    */
   async getContentSummary(documentId: string, maxLength: number = 200): Promise<string> {
     const document = await this.get(documentId);
-    if (!document) {
+    if (!document || !document.content) {
       return '';
     }
 
