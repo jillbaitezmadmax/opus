@@ -192,6 +192,8 @@ export interface AiTurn {
     branchPointTurnId?: string;
     replacesId?: string;
     isHistoricalRerun?: boolean;
+    synthForUserTurnId?: string; 
+  [key: string]: any;
   };
 }
 

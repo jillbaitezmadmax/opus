@@ -1,7 +1,7 @@
 // Threads Repository - Manages thread records
 
 import { BaseRepository } from '../BaseRepository';
-import { ThreadRecord } from '../types';
+import { ThreadRecord } from './types';
 
 export class ThreadsRepository extends BaseRepository<ThreadRecord> {
   constructor(db: IDBDatabase) {

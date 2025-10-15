@@ -11,7 +11,7 @@ import type {
   GhostRecord,
   ProviderContextRecord,
   MetadataRecord
-} from '../types.js';
+} from '../types';
 
 /**
  * Provenance trace result containing the full lineage of an entity

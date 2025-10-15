@@ -2,7 +2,7 @@
 // Provides a single entry point for all persistence-related functionality
 
 // Core types
-export * from './types.js';
+export * from './types';
 
 // Database and transactions
 export * from './database.js';

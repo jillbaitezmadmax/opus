@@ -10,7 +10,7 @@ import type {
   GhostRecord,
   ProviderContextRecord,
   MetadataRecord
-} from '../types.js';
+} from '../types';
 
 /**
  * Configuration for persistence adapter initialization

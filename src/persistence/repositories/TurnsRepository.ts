@@ -1,7 +1,7 @@
 // Turns Repository - Manages turn records
 
 import { BaseRepository } from '../BaseRepository';
-import { TurnRecord } from '../types';
+import { TurnRecord } from './types';
 
 export class TurnsRepository extends BaseRepository<TurnRecord> {
   constructor(db: IDBDatabase) {

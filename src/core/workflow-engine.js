@@ -9,23 +9,22 @@ function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider) 
     .map(res => `**${(res.providerId || 'UNKNOWN').toUpperCase()}:**\n${String(res.text)}`)
     .join('\n\n');
 
-  return `You are tasked with synthesizing multiple AI responses into a single, comprehensive answer.
+  return `Synthesize multiple AI responses to create the definitive answer to this query:
 
 **Original User Query:**
 ${originalPrompt}
+
+You responded to this query. Your previous response (visible above) must be included in your synthesis alongside the outputs below.
 
 **Responses from other AI models:**
 ${otherResults}
 
 **Instructions:**
-- Synthesize the above responses into a single, well-structured answer
-- Identify common themes and reconcile any contradictions
-- Provide the most accurate and helpful response possible
-- Do not simply concatenate the responses - create a cohesive synthesis
-- If the responses disagree, explain the different perspectives and provide your best judgment
-- Maintain a natural, conversational tone
+Integrate the strongest insights from all available responses, resolve conflicts intelligently, and produce a unified answer that surpasses any individual response.
 
-Please provide your synthesized response:`;
+Write directly to answer the query—no meta-commentary, no attribution.
+
+Begin`;
 }
 
 function buildEnsemblerPrompt(userPrompt, sourceResults) {

@@ -44,6 +44,16 @@ export interface GhostData {
   isPinned: boolean;
 }
 
+// Message type definitions
+interface DeleteDocumentMessage {
+  type: 'DELETE_DOCUMENT';
+  documentId: string;
+}
+
+interface ListDocumentsMessage {
+  type: 'LIST_DOCUMENTS';
+}
+
 class ExtensionBridge {
   private isExtensionContext: boolean;
 
@@ -168,11 +178,40 @@ class ExtensionBridge {
       });
       return response.document;
     } catch (error) {
-      if (error.message.includes('Document persistence not enabled')) {
+      if ((error as Error).message.includes('Document persistence not enabled')) {
         return null;
       }
       throw error;
     }
+  }
+
+  /**
+   * Delete a document
+   */
+  async deleteDocument(documentId: string): Promise<void> {
+    if (!this.isAvailable()) {
+      throw new Error('Extension bridge not available');
+    }
+
+    await this.sendMessage({
+      type: 'DELETE_DOCUMENT',
+      documentId
+    } as DeleteDocumentMessage);
+  }
+
+  /**
+   * List documents
+   */
+  async listDocuments(): Promise<Array<{ id: string; title: string; lastModified: number }>> {
+    if (!this.isAvailable()) {
+      throw new Error('Extension bridge not available');
+    }
+
+    const response = await this.sendMessage({
+      type: 'LIST_DOCUMENTS'
+    } as ListDocumentsMessage);
+
+    return response.documents || [];
   }
 
   /**
@@ -242,7 +281,7 @@ class ExtensionBridge {
       });
       return response.status;
     } catch (error) {
-      return { status: 'error', error: error.message };
+      return { status: 'error', error: (error as Error).message };
     }
   }
 
@@ -275,4 +314,3 @@ class ExtensionBridge {
 export const extensionBridge = new ExtensionBridge();
 
 // Export types for use in other components
-export type { SessionData, PersistenceStatus, DocumentData, GhostData };

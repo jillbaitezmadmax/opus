@@ -1,7 +1,7 @@
 // Provider Responses Repository - Manages provider response records
 
 import { BaseRepository } from '../BaseRepository';
-import { ProviderResponseRecord } from '../types';
+import { ProviderResponseRecord } from './types';
 
 export class ProviderResponsesRepository extends BaseRepository<ProviderResponseRecord> {
   constructor(db: IDBDatabase) {

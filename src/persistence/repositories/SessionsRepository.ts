@@ -1,7 +1,7 @@
 // Sessions Repository - Manages session records
 
 import { BaseRepository } from '../BaseRepository';
-import { SessionRecord } from '../types';
+import { SessionRecord } from './types';
 
 export class SessionsRepository extends BaseRepository<SessionRecord> {
   constructor(db: IDBDatabase) {

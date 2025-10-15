@@ -1,6 +1,6 @@
 // Transaction Utilities for IndexedDB Operations
 
-import { VersionConflictResult, BatchWriteResult } from './types.js';
+import { VersionConflictResult, BatchWriteResult } from './types';
 
 /**
  * Maximum number of retry attempts for transient failures

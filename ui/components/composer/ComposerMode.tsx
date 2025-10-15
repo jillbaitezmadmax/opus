@@ -61,6 +61,8 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
   // Document persistence state
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingDoc, setIsLoadingDoc] = useState(true);
+  const [lastSaved, setLastSaved] = useState<number>(0);
   
   // Find the focused turn or default to the last AI turn
   const focusedTurn = useMemo(() => {
@@ -87,22 +89,24 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
         id: documentId,
         title: `Document ${new Date().toLocaleDateString()}`,
         sourceSessionId: sessionId,
-        canvasContent: composerState.content,
+        canvasContent: composerState.canvasContent,
         granularity: composerState.granularity,
         isDirty: false,
-        createdAt: currentDocumentId ? undefined : new Date().toISOString(),
-        lastModified: new Date().toISOString(),
+        createdAt: currentDocumentId ? Date.now() : Date.now(),
+        lastModified: Date.now(),
+        updatedAt: Date.now(),
         version: 1,
-        blockCount: composerState.content.length,
+        blockCount: composerState.canvasContent.length,
         refinementHistory: [],
         exportHistory: [],
         snapshots: [],
-        _tempStorage: true
+        _tempStorage: false
       };
       
       await enhancedDocumentStore.saveDocument(document);
       setCurrentDocumentId(documentId);
-      actions.markClean();
+      actions.markSaved();
+      setLastSaved(Date.now());
     } catch (error) {
       console.error('Failed to save document:', error);
     } finally {
@@ -114,15 +118,78 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
     try {
       const document = await enhancedDocumentStore.loadDocument(documentId);
       if (document) {
-        actions.setContent(document.canvasContent);
+        actions.setCanvasContent(document.canvasContent as any);
         actions.setGranularity(document.granularity);
-        setCurrentDocumentId(documentId);
-        actions.markClean();
+        setCurrentDocumentId(document.id);
+        actions.markSaved();
       }
     } catch (error) {
       console.error('Failed to load document:', error);
     }
   }, [actions]);
+
+  // Document initialization effect
+  useEffect(() => {
+    const initDocument = async () => {
+      setIsLoadingDoc(true);
+      try {
+        if (focusedTurn?.composerState?.documentId) {
+          const doc = await enhancedDocumentStore.loadDocument(focusedTurn.composerState.documentId);
+          if (doc) {
+            actions.setCanvasContent(doc.canvasContent as any);
+            actions.setGranularity(doc.granularity);
+            setCurrentDocumentId(doc.id);
+            actions.markSaved();
+            // Load existing ghosts for this document
+            try {
+              const ghosts = await enhancedDocumentStore.getDocumentGhosts(doc.id);
+              (ghosts || []).forEach((g: any) => actions.addGhost(g));
+            } catch {}
+            setIsLoadingDoc(false);
+            return;
+          }
+        }
+
+        // No document exists - create new one
+        const newDoc = await enhancedDocumentStore.createDocument(
+          `Composition from ${new Date().toLocaleDateString()}`,
+          sessionId || undefined,
+          [{ type: 'paragraph', children: [{ text: '' }] }]
+        );
+        setCurrentDocumentId(newDoc.id);
+
+        // Link document ID back to the focused AI turn
+        if (onUpdateAiTurn && focusedTurn) {
+          const defaultComposerState: ComposerState = {
+            canvasContent: [{ type: 'paragraph', children: [{ text: '' }] }],
+            granularity: 'paragraph',
+            sourceMap: {},
+            isDirty: false,
+            createdAt: Date.now(),
+            lastModified: Date.now(),
+            refinementHistory: [],
+            exportHistory: [],
+            ghosts: [],
+            content: [{ type: 'paragraph', children: [{ text: '' }] }]
+          };
+          
+          onUpdateAiTurn(focusedTurn.id, {
+            composerState: {
+              ...defaultComposerState,
+              ...(focusedTurn.composerState || {}),
+              documentId: newDoc.id
+            }
+          });
+        }
+      } catch (error) {
+        console.error('[Composer] Document init failed:', error);
+      } finally {
+        setIsLoadingDoc(false);
+      }
+    };
+
+    initDocument();
+  }, [focusedTurn?.id, sessionId]);
   
   // Debounced auto-save effect
   useEffect(() => {
@@ -154,70 +221,43 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
   // Handle drag end
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
-    
     if (!over) return;
-    
     const dragData = active.data.current;
-    
     if (!dragData) return;
-    
-    // Handle different drag types
-    if (dragData.type === 'content-unit') {
-      // New FocusPane drag with provenance
-      const { unit, provenance } = dragData;
-      
+
+    // Handle ghost drag from GhostLayer
+    if (dragData?.ghost) {
+      const ghost = dragData.ghost as any; // Ghost
       const newNode: SlateDescendant = {
         type: 'composed-content',
-        id: uuidv4(),
-        children: [{ text: unit.content }],
-        provenance: {
-          sessionId: provenance.sessionId,
-          aiTurnId: provenance.aiTurnId,
-          providerId: provenance.providerId,
-          responseType: provenance.responseType,
-          responseIndex: provenance.responseIndex,
-          textRange: provenance.textRange,
-        },
+        children: [{ text: ghost.text }],
+        provenance: ghost.provenance,
+        metadata: {
+          granularity: 'full',
+          timestamp: Date.now()
+        }
+      } as any;
+      Transforms.insertNodes(editor, newNode, { at: [editor.children.length] });
+      actions.setDirty(true);
+      return;
+    }
+
+    // Handle unit drag from FocusPane with provenance
+    if (dragData?.unit && dragData?.provenance) {
+      const { unit, provenance } = dragData as any;
+      const newNode: SlateDescendant = {
+        type: 'composed-content',
+        children: [{ text: unit.text }],
+        provenance,
         metadata: {
           granularity: unit.type,
-          timestamp: Date.now(),
-        },
-      };
-      
-      // Insert at the end of the document
-      Transforms.insertNodes(editor, newNode, {
-        at: [editor.children.length],
-      });
-    } else {
-      // Legacy drag handling for backward compatibility
-      const draggedUnit = dragData as GranularUnit;
-      
-      const newNode: SlateDescendant = {
-        type: 'composed-content',
-        sourceId: draggedUnit.sourceId,
-        providerId: draggedUnit.providerId,
-        children: [{ text: draggedUnit.text }],
-        metadata: {
-          originalIndex: draggedUnit.index,
-          granularity: draggedUnit.type,
-          timestamp: Date.now(),
-        },
-      };
-      
-      // Insert at the end of the document
-      Transforms.insertNodes(editor, newNode, {
-        at: [editor.children.length],
-      });
+          timestamp: Date.now()
+        }
+      } as any;
+      Transforms.insertNodes(editor, newNode, { at: [editor.children.length] });
+      actions.setDirty(true);
+      return;
     }
-    
-    // Add a paragraph break after
-    Transforms.insertNodes(
-      editor,
-      { type: 'paragraph', children: [{ text: '' }] },
-      { at: [editor.children.length] }
-    );
-    
-    actions.setDirty(true);
   }, [editor, actions]);
   
   // Handle canvas content change
@@ -285,6 +325,23 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
         flexDirection: 'column',
       }}
     >
+      {isLoadingDoc && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: '#0f172a',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#e2e8f0',
+          fontSize: '16px'
+        }}>
+          Loading document...
+        </div>
+      )}
       <ComposerToolbar
         granularity={composerState.granularity}
         onGranularityChange={actions.setGranularity}
@@ -312,12 +369,16 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
         >
           <SourcePanel
             allTurns={allTurns}
-            focusedTurnId={focusedTurnId}
-            onFocusedTurnChange={setFocusedTurnId}
-            sources={sources}
             granularity={composerState.granularity}
             sessionId={sessionId}
-            onAddGhost={actions.addGhost}
+            onAddGhost={(ghostData) => {
+              // Compute order based on existing ghosts
+              const ghost = {
+                ...ghostData,
+                order: composerState.ghosts.length
+              } as any;
+              actions.addGhost(ghost);
+            }}
           />
           
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>

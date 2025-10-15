@@ -4,7 +4,7 @@
 
 import type { BaseEditor } from 'slate';
 import type { ReactEditor } from 'slate-react';
-import type { GranularUnit } from '../types';
+import type { Provenance } from '../types';
 
 // 1. Define the structure of our custom text nodes
 type CustomText = {
@@ -22,11 +22,13 @@ type ParagraphElement = {
 
 type ComposedContentElement = {
   type: 'composed-content';
-  sourceId: string;
-  providerId: string;
+  id?: string;
+  sourceId?: string;
+  providerId?: string;
+  provenance: Provenance; // Required provenance using unified type
   metadata?: {
     originalIndex?: number;
-    granularity?: GranularUnit['type'] | 'unknown';
+    granularity?: 'full' | 'paragraph' | 'sentence' | 'unknown';
     timestamp?: number;
   };
   children: CustomText[];

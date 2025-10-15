@@ -9,7 +9,7 @@ import type {
   SessionRecord,
   TurnRecord,
   ProviderResponseRecord
-} from './types.js';
+} from './types';
 import type { DocumentsRepository } from './repositories/DocumentsRepository.js';
 import type { CanvasBlocksRepository } from './repositories/CanvasBlocksRepository.js';
 import type { GhostsRepository } from './repositories/GhostsRepository.js';

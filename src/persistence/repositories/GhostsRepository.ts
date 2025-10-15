@@ -1,7 +1,7 @@
 // Ghosts Repository - Manages ghost records for temporal state tracking
 
 import { BaseRepository } from '../BaseRepository';
-import { GhostRecord } from '../types';
+import { GhostRecord } from './types';
 
 export class GhostsRepository extends BaseRepository<GhostRecord> {
   constructor(db: IDBDatabase) {

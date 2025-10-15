@@ -1,7 +1,7 @@
 // Documents Repository - Manages document records
 
 import { BaseRepository } from '../BaseRepository';
-import { DocumentRecord } from '../types';
+import { DocumentRecord } from './types';
 
 export class DocumentsRepository extends BaseRepository<DocumentRecord> {
   constructor(db: IDBDatabase) {

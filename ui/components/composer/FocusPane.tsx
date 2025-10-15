@@ -9,7 +9,7 @@ interface FocusPaneProps {
   turn: AiTurn | null;
   granularity: 'full' | 'paragraph' | 'sentence';
   sessionId: string | null;
-  onAddGhost: (ghost: Ghost) => void;
+  onAddGhost: (ghostData: Omit<Ghost, 'order'>) => void;
 }
 
 interface DraggableUnitProps {
@@ -132,17 +132,15 @@ const FocusPane: React.FC<FocusPaneProps> = ({ turn, granularity, sessionId, onA
 
   // Handle Alt+Click ghost collection
   const handleGhostCollection = (unit: GranularUnit, provenance: any) => {
-    const ghost: Ghost = {
+    const ghostData: Omit<Ghost, 'order'> = {
       id: uuidv4(),
       text: unit.text,
       preview: unit.text.length > 200 ? unit.text.substring(0, 200) + '...' : unit.text,
       provenance,
-      order: Date.now(), // Use timestamp as order for now
       createdAt: Date.now(),
       isPinned: false,
     };
-    
-    onAddGhost(ghost);
+    onAddGhost(ghostData);
   };
   
   if (!turn) {

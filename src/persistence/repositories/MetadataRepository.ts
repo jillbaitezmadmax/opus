@@ -1,7 +1,7 @@
 // // Metadata Repository - Manages metadata records
 
 import { BaseRepository } from '../BaseRepository';
-import { MetadataRecord } from '../types';
+import { MetadataRecord } from './types';
 
 export class MetadataRepository extends BaseRepository<MetadataRecord> {
   constructor(db: IDBDatabase) {

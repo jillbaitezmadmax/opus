@@ -1,7 +1,7 @@
 // Provider Contexts Repository - Manages provider context records
 
 import { BaseRepository } from '../BaseRepository';
-import { ProviderContextRecord } from '../types';
+import { ProviderContextRecord } from './types';
 
 export class ProviderContextsRepository extends BaseRepository<ProviderContextRecord> {
   constructor(db: IDBDatabase) {

@@ -107,7 +107,7 @@
    ```
    In ui/types/slate.d.ts:
    
-   import type { Provenance } from '../types';
+   import type { Provenance } from './types';
    
    type ComposedContentElement = {
      type: 'composed-content';
@@ -124,7 +124,7 @@
    - import from '../../src/persistence/types'
    
    Replace with:
-   - import from '../types' (or '../../types' based on depth)
+   - import from './types' (or '.././types' based on depth)
    
    Specifically check these files:
    - ui/components/composer/FocusPane.tsx

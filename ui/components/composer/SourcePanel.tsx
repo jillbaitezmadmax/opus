@@ -8,7 +8,7 @@ interface SourcePanelProps {
   allTurns: TurnMessage[];
   granularity: 'full' | 'paragraph' | 'sentence';
   sessionId: string | null;
-  onAddGhost: (ghost: Ghost) => void;
+  onAddGhost: (ghostData: Omit<Ghost, 'order'>) => void;
 }
 
 const SourcePanel: React.FC<SourcePanelProps> = ({ 
