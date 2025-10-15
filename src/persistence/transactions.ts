@@ -62,22 +62,28 @@ function executeTransaction<T>(
     const transaction = db.transaction(storeNames, mode);
     let workResult: T;
     let workCompleted = false;
+    let workRejected = false;
     
     // Set up transaction event handlers
     transaction.oncomplete = () => {
-      if (workCompleted) {
+      if (workCompleted && !workRejected) {
         resolve(workResult);
-      } else {
+      } else if (!workRejected) {
         reject(new Error('Transaction completed but work function did not complete'));
       }
+      // If work was rejected, the rejection was already handled in the catch block
     };
     
     transaction.onerror = () => {
-      reject(transaction.error || new Error('Transaction failed with unknown error'));
+      if (!workRejected) {
+        reject(transaction.error || new Error('Transaction failed with unknown error'));
+      }
     };
     
     transaction.onabort = () => {
-      reject(new Error('Transaction was aborted'));
+      if (!workRejected) {
+        reject(new Error('Transaction was aborted'));
+      }
     };
     
     // Execute the work function
@@ -85,8 +91,10 @@ function executeTransaction<T>(
       .then(result => {
         workResult = result;
         workCompleted = true;
+        // Don't resolve here - wait for transaction.oncomplete
       })
       .catch(error => {
+        workRejected = true;
         // Abort the transaction if the work function fails
         try {
           transaction.abort();

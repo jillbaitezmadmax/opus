@@ -184,6 +184,13 @@ export class GeminiSessionApi {
       this._throw("failedToReadResponse", { step: "answer", error: p });
     }
 
+    // In Gemini's response handler:
+    console.info('[Gemini] Response received:', {
+      hasText: !!u?.text,
+      textLength: u?.text?.length || 0,
+      status: response?.status || 'unknown'
+    });
+
     return {
       text: u.text,
       cursor: u.cursor,

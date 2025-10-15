@@ -128,3 +128,12 @@ footer {
 .provider-block:hover .copy-button-wrapper {
   opacity: 1;
 }
+
+/* FIX: Add class for truncating content */
+.truncated-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 3; /* You can adjust this value */
+}

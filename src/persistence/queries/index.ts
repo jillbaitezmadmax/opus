@@ -9,10 +9,11 @@ export {
 } from './ProvenanceQueries.js';
 
 /**
- * Factory function to create provenance queries instance
+ * Factory function to create provenance queries instance using the persistence adapter
  */
-import type { RepositoryCollection } from '../repositories/index.js';
+import type { IPersistenceAdapter } from '../adapters/IPersistenceAdapter.js';
+import { ProvenanceQueries } from './ProvenanceQueries.js';
 
-export function createProvenanceQueries(repositories: RepositoryCollection): ProvenanceQueries {
-  return new ProvenanceQueries(repositories);
+export function createProvenanceQueries(adapter: IPersistenceAdapter): ProvenanceQueries {
+  return new ProvenanceQueries(adapter as any);
 }

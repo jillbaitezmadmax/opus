@@ -1,6 +1,6 @@
 // Provenance Query Helpers - Complex cross-store queries for data lineage and relationships
 
-import type { RepositoryCollection } from '../repositories/index.js';
+import type { SimpleIndexedDBAdapter } from '../SimpleIndexedDBAdapter.js';
 import type {
   SessionRecord,
   ThreadRecord,
@@ -97,7 +97,7 @@ export interface ActivityEntry {
  * Provenance query helper class
  */
 export class ProvenanceQueries {
-  constructor(private repositories: RepositoryCollection) {}
+  constructor(private adapter: SimpleIndexedDBAdapter) {}
 
   /**
    * Get complete provenance trace for any entity
@@ -118,7 +118,8 @@ export class ProvenanceQueries {
     }
 
     // Get historical changes
-    const ghosts = await this.repositories.ghosts.getByEntityId(entityId);
+    const allGhosts = await this.adapter.getAll('ghosts') as GhostRecord[];
+    const ghosts = allGhosts.filter(ghost => ghost.entityId === entityId);
     trace.history = ghosts
       .filter(ghost => ghost.timestamp !== undefined && ghost.operation !== undefined)
       .map(ghost => ({
@@ -157,36 +158,47 @@ export class ProvenanceQueries {
    * Get complete session lineage with all related entities
    */
   async getSessionLineage(sessionId: string): Promise<SessionLineage> {
-    const session = await this.repositories.sessions.get(sessionId);
+    const session = await this.adapter.get('sessions', sessionId) as SessionRecord;
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    const [threads, documents, providerContexts, metadata] = await Promise.all([
-      this.repositories.threads.getBySessionId(sessionId),
-      this.repositories.documents.getBySessionId(sessionId),
-      this.repositories.providerContexts.getBySessionId(sessionId),
-      this.repositories.metadata.getByEntityId(sessionId)
+    const [allThreads, allDocuments, allProviderContexts, allMetadata] = await Promise.all([
+      this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+      this.adapter.getAll('documents') as Promise<DocumentRecord[]>,
+      this.adapter.getAll('providerContexts') as Promise<ProviderContextRecord[]>,
+      this.adapter.getAll('metadata') as Promise<MetadataRecord[]>
     ]);
+
+    const threads = allThreads.filter(thread => thread.sessionId === sessionId);
+    const documents = allDocuments.filter(doc => doc.sessionId === sessionId || doc.sourceSessionId === sessionId);
+    const providerContexts = allProviderContexts.filter(context => context.sessionId === sessionId);
+    const metadata = allMetadata.filter(meta => meta.entityId === sessionId);
 
     // Get all turns for all threads
     const allTurns: TurnRecord[] = [];
     const allProviderResponses: ProviderResponseRecord[] = [];
     
+    const [allTurnsData, allResponsesData] = await Promise.all([
+      this.adapter.getAll('turns') as Promise<TurnRecord[]>,
+      this.adapter.getAll('providerResponses') as Promise<ProviderResponseRecord[]>
+    ]);
+    
     for (const thread of threads) {
-      const threadTurns = await this.repositories.turns.getByThreadId(thread.id);
+      const threadTurns = allTurnsData.filter(turn => turn.threadId === thread.id);
       allTurns.push(...threadTurns);
       
       for (const turn of threadTurns) {
-        const responses = await this.repositories.providerResponses.getByTurnId(turn.id);
+        const responses = allResponsesData.filter(response => response.aiTurnId === turn.id);
         allProviderResponses.push(...responses);
       }
     }
 
     // Get all canvas blocks for all documents
     const allCanvasBlocks: CanvasBlockRecord[] = [];
+    const allBlocksData = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
     for (const document of documents) {
-      const blocks = await this.repositories.canvasBlocks.getByDocumentId(document.id);
+      const blocks = allBlocksData.filter(block => block.documentId === document.id);
       allCanvasBlocks.push(...blocks);
     }
 
@@ -216,13 +228,17 @@ export class ProvenanceQueries {
     switch (entityType) {
       case 'session':
         // Find threads, documents, contexts that reference this session
-        const sessionRefs = await Promise.all([
-          this.repositories.threads.getBySessionId(entityId),
-          this.repositories.documents.getBySessionId(entityId),
-          this.repositories.providerContexts.getBySessionId(entityId)
+        const [allThreads, allDocuments, allProviderContexts] = await Promise.all([
+          this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+          this.adapter.getAll('documents') as Promise<DocumentRecord[]>,
+          this.adapter.getAll('providerContexts') as Promise<ProviderContextRecord[]>
         ]);
 
-        sessionRefs[0].forEach(thread => {
+        const sessionThreads = allThreads.filter(thread => thread.sessionId === entityId);
+        const sessionDocs = allDocuments.filter(doc => doc.sessionId === entityId || doc.sourceSessionId === entityId);
+        const sessionContexts = allProviderContexts.filter(context => context.sessionId === entityId);
+
+        sessionThreads.forEach(thread => {
           references.push({
             sourceEntity: { id: entityId, type: 'session' },
             targetEntity: { id: thread.id, type: 'thread' },
@@ -231,7 +247,7 @@ export class ProvenanceQueries {
           });
         });
 
-        sessionRefs[1].forEach(doc => {
+        sessionDocs.forEach(doc => {
           references.push({
             sourceEntity: { id: entityId, type: 'session' },
             targetEntity: { id: doc.id, type: 'document' },
@@ -240,7 +256,7 @@ export class ProvenanceQueries {
           });
         });
 
-        sessionRefs[2].forEach(context => {
+        sessionContexts.forEach(context => {
           references.push({
             sourceEntity: { id: entityId, type: 'session' },
             targetEntity: { id: context.id, type: 'providerContext' },
@@ -252,7 +268,8 @@ export class ProvenanceQueries {
 
       case 'thread':
         // Find turns that belong to this thread
-        const turns = await this.repositories.turns.getByThreadId(entityId);
+        const allTurns = await this.adapter.getAll('turns') as TurnRecord[];
+        const turns = allTurns.filter(turn => turn.threadId === entityId);
         turns.forEach(turn => {
           references.push({
             sourceEntity: { id: entityId, type: 'thread' },
@@ -265,7 +282,8 @@ export class ProvenanceQueries {
 
       case 'turn':
         // Find provider responses for this turn
-        const responses = await this.repositories.providerResponses.getByTurnId(entityId);
+        const allResponses = await this.adapter.getAll('providerResponses') as ProviderResponseRecord[];
+        const responses = allResponses.filter(response => response.aiTurnId === entityId);
         responses.forEach(response => {
           references.push({
             sourceEntity: { id: entityId, type: 'turn' },
@@ -278,7 +296,8 @@ export class ProvenanceQueries {
 
       case 'document':
         // Find canvas blocks that belong to this document
-        const blocks = await this.repositories.canvasBlocks.getByDocumentId(entityId);
+        const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+        const blocks = allBlocks.filter(block => block.documentId === entityId);
         blocks.forEach(block => {
           references.push({
             sourceEntity: { id: entityId, type: 'document' },
@@ -291,7 +310,8 @@ export class ProvenanceQueries {
     }
 
     // Find metadata references
-    const metadata = await this.repositories.metadata.getByEntityId(entityId);
+    const allMetadata = await this.adapter.getAll('metadata') as MetadataRecord[];
+    const metadata = allMetadata.filter(meta => meta.entityId === entityId);
     metadata.forEach(meta => {
       references.push({
         sourceEntity: { id: entityId, type: entityType },
@@ -315,20 +335,32 @@ export class ProvenanceQueries {
 
     // Collect activities from ghosts (change history)
     let ghosts: GhostRecord[] = [];
+    const allGhosts = await this.adapter.getAll('ghosts') as GhostRecord[];
+    
     if (filter.sessionId) {
-      ghosts = await this.repositories.ghosts.getBySessionId(filter.sessionId);
+      ghosts = allGhosts.filter(ghost => ghost.sessionId === filter.sessionId);
     } else if (filter.userId) {
       // Get recent sessions for the user and then get ghosts
-      const recentSessions = await this.repositories.sessions.getRecentByUserId(filter.userId, 10);
+      const allSessions = await this.adapter.getAll('sessions') as SessionRecord[];
+      const recentSessions = allSessions
+        .filter(session => session.userId === filter.userId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 10);
       if (recentSessions.length > 0) {
-        ghosts = await this.repositories.ghosts.getRecentActivity(recentSessions[0].id, limit * 2);
+        ghosts = allGhosts
+          .filter(ghost => ghost.sessionId === recentSessions[0].id)
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+          .slice(0, limit * 2);
       }
     } else {
       // Get all sessions and pick the most recent one
-      const allSessions = await this.repositories.sessions.getAll();
+      const allSessions = await this.adapter.getAll('sessions') as SessionRecord[];
       const sortedSessions = allSessions.sort((a, b) => b.updatedAt - a.updatedAt);
       if (sortedSessions.length > 0) {
-        ghosts = await this.repositories.ghosts.getRecentActivity(sortedSessions[0].id, limit * 2);
+        ghosts = allGhosts
+          .filter(ghost => ghost.sessionId === sortedSessions[0].id)
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+          .slice(0, limit * 2);
       }
     }
 
@@ -348,11 +380,15 @@ export class ProvenanceQueries {
 
     // Add creation activities from main entities
     if (filter.sessionId) {
-      const [threads, turns, documents] = await Promise.all([
-        this.repositories.threads.getBySessionId(filter.sessionId),
-        this.repositories.turns.getBySessionId(filter.sessionId),
-        this.repositories.documents.getBySessionId(filter.sessionId)
+      const [allThreads, allTurns, allDocuments] = await Promise.all([
+        this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+        this.adapter.getAll('turns') as Promise<TurnRecord[]>,
+        this.adapter.getAll('documents') as Promise<DocumentRecord[]>
       ]);
+
+      const threads = allThreads.filter(thread => thread.sessionId === filter.sessionId);
+      const turns = allTurns.filter(turn => turn.sessionId === filter.sessionId);
+      const documents = allDocuments.filter(doc => doc.sessionId === filter.sessionId || doc.sourceSessionId === filter.sessionId);
 
       // Add thread creations
       threads.forEach(thread => {
@@ -401,10 +437,18 @@ export class ProvenanceQueries {
   async findOrphanedEntities(): Promise<Array<{ id: string; type: string; reason: string }>> {
     const orphans: Array<{ id: string; type: string; reason: string }> = [];
 
+    const [allThreads, allTurns, allResponses, allBlocks, allSessions, allDocuments] = await Promise.all([
+      this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+      this.adapter.getAll('turns') as Promise<TurnRecord[]>,
+      this.adapter.getAll('providerResponses') as Promise<ProviderResponseRecord[]>,
+      this.adapter.getAll('canvasBlocks') as Promise<CanvasBlockRecord[]>,
+      this.adapter.getAll('sessions') as Promise<SessionRecord[]>,
+      this.adapter.getAll('documents') as Promise<DocumentRecord[]>
+    ]);
+
     // Find threads without valid sessions
-    const allThreads = await this.repositories.threads.getAll();
     for (const thread of allThreads) {
-      const session = await this.repositories.sessions.get(thread.sessionId);
+      const session = allSessions.find(s => s.id === thread.sessionId);
       if (!session) {
         orphans.push({
           id: thread.id,
@@ -415,9 +459,8 @@ export class ProvenanceQueries {
     }
 
     // Find turns without valid threads
-    const allTurns = await this.repositories.turns.getAll();
     for (const turn of allTurns) {
-      const thread = await this.repositories.threads.get(turn.threadId);
+      const thread = allThreads.find(t => t.id === turn.threadId);
       if (!thread) {
         orphans.push({
           id: turn.id,
@@ -428,9 +471,8 @@ export class ProvenanceQueries {
     }
 
     // Find provider responses without valid turns
-    const allResponses = await this.repositories.providerResponses.getAll();
     for (const response of allResponses) {
-      const turn = await this.repositories.turns.get(response.aiTurnId);
+      const turn = allTurns.find(t => t.id === response.aiTurnId);
       if (!turn) {
         orphans.push({
           id: response.id,
@@ -441,9 +483,8 @@ export class ProvenanceQueries {
     }
 
     // Find canvas blocks without valid documents
-    const allBlocks = await this.repositories.canvasBlocks.getAll();
     for (const block of allBlocks) {
-      const document = await this.repositories.documents.get(block.documentId);
+      const document = allDocuments.find(d => d.id === block.documentId);
       if (!document) {
         orphans.push({
           id: block.id,
@@ -461,26 +502,36 @@ export class ProvenanceQueries {
    */
   async getEntityStats(): Promise<Record<string, any>> {
     const [
-      sessionCount,
-      threadCount,
-      turnCount,
-      responseCount,
-      documentCount,
-      blockCount,
-      ghostCount,
-      contextCount,
-      metadataCount
+      allSessions,
+      allThreads,
+      allTurns,
+      allResponses,
+      allDocuments,
+      allBlocks,
+      allGhosts,
+      allContexts,
+      allMetadata
     ] = await Promise.all([
-      this.repositories.sessions.count(),
-      this.repositories.threads.count(),
-      this.repositories.turns.count(),
-      this.repositories.providerResponses.count(),
-      this.repositories.documents.count(),
-      this.repositories.canvasBlocks.count(),
-      this.repositories.ghosts.count(),
-      this.repositories.providerContexts.count(),
-      this.repositories.metadata.count()
+      this.adapter.getAll('sessions') as Promise<SessionRecord[]>,
+      this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+      this.adapter.getAll('turns') as Promise<TurnRecord[]>,
+      this.adapter.getAll('providerResponses') as Promise<ProviderResponseRecord[]>,
+      this.adapter.getAll('documents') as Promise<DocumentRecord[]>,
+      this.adapter.getAll('canvasBlocks') as Promise<CanvasBlockRecord[]>,
+      this.adapter.getAll('ghosts') as Promise<GhostRecord[]>,
+      this.adapter.getAll('providerContexts') as Promise<ProviderContextRecord[]>,
+      this.adapter.getAll('metadata') as Promise<MetadataRecord[]>
     ]);
+
+    const sessionCount = allSessions.length;
+    const threadCount = allThreads.length;
+    const turnCount = allTurns.length;
+    const responseCount = allResponses.length;
+    const documentCount = allDocuments.length;
+    const blockCount = allBlocks.length;
+    const ghostCount = allGhosts.length;
+    const contextCount = allContexts.length;
+    const metadataCount = allMetadata.length;
 
     return {
       entities: {
@@ -509,27 +560,20 @@ export class ProvenanceQueries {
   // Private helper methods
 
   private async getEntityById(id: string, type: string): Promise<any> {
-    switch (type) {
-      case 'session': return this.repositories.sessions.get(id);
-      case 'thread': return this.repositories.threads.get(id);
-      case 'turn': return this.repositories.turns.get(id);
-      case 'providerResponse': return this.repositories.providerResponses.get(id);
-      case 'document': return this.repositories.documents.get(id);
-      case 'canvasBlock': return this.repositories.canvasBlocks.get(id);
-      case 'ghost': return this.repositories.ghosts.get(id);
-      case 'providerContext': return this.repositories.providerContexts.get(id);
-      case 'metadata': return this.repositories.metadata.get(id);
-      default: return null;
-    }
+    return await this.adapter.get(type + 's' as any, id);
   }
 
   private async buildSessionProvenance(trace: ProvenanceTrace, session: SessionRecord): Promise<void> {
     // Children: threads, documents, contexts
-    const [threads, documents, contexts] = await Promise.all([
-      this.repositories.threads.getBySessionId(session.id),
-      this.repositories.documents.getBySessionId(session.id),
-      this.repositories.providerContexts.getBySessionId(session.id)
+    const [allThreads, allDocuments, allContexts] = await Promise.all([
+      this.adapter.getAll('threads') as Promise<ThreadRecord[]>,
+      this.adapter.getAll('documents') as Promise<DocumentRecord[]>,
+      this.adapter.getAll('providerContexts') as Promise<ProviderContextRecord[]>
     ]);
+
+    const threads = allThreads.filter(thread => thread.sessionId === session.id);
+    const documents = allDocuments.filter(doc => doc.sessionId === session.id || doc.sourceSessionId === session.id);
+    const contexts = allContexts.filter(context => context.sessionId === session.id);
 
     threads.forEach(thread => {
       trace.children.push({
@@ -561,7 +605,7 @@ export class ProvenanceQueries {
 
   private async buildThreadProvenance(trace: ProvenanceTrace, thread: ThreadRecord): Promise<void> {
     // Parent: session
-    const session = await this.repositories.sessions.get(thread.sessionId);
+    const session = await this.adapter.get('sessions', thread.sessionId) as SessionRecord;
     if (session) {
       trace.parents.push({
         id: session.id,
@@ -572,7 +616,8 @@ export class ProvenanceQueries {
     }
 
     // Children: turns
-    const turns = await this.repositories.turns.getByThreadId(thread.id);
+    const allTurns = await this.adapter.getAll('turns') as TurnRecord[];
+    const turns = allTurns.filter(turn => turn.threadId === thread.id);
     turns.forEach(turn => {
       trace.children.push({
         id: turn.id,
@@ -585,7 +630,7 @@ export class ProvenanceQueries {
 
   private async buildTurnProvenance(trace: ProvenanceTrace, turn: TurnRecord): Promise<void> {
     // Parent: thread
-    const thread = await this.repositories.threads.get(turn.threadId);
+    const thread = await this.adapter.get('threads', turn.threadId) as ThreadRecord;
     if (thread) {
       trace.parents.push({
         id: thread.id,
@@ -595,7 +640,7 @@ export class ProvenanceQueries {
       });
 
       // Grandparent: session
-      const session = await this.repositories.sessions.get(thread.sessionId);
+      const session = await this.adapter.get('sessions', thread.sessionId) as SessionRecord;
       if (session) {
         trace.parents.push({
           id: session.id,
@@ -607,7 +652,8 @@ export class ProvenanceQueries {
     }
 
     // Children: provider responses
-    const responses = await this.repositories.providerResponses.getByTurnId(turn.id);
+    const allResponses = await this.adapter.getAll('providerResponses') as ProviderResponseRecord[];
+    const responses = allResponses.filter(response => response.aiTurnId === turn.id);
     responses.forEach(response => {
       trace.children.push({
         id: response.id,
@@ -622,7 +668,7 @@ export class ProvenanceQueries {
     // Parent: session
     const sessionId = document.sessionId || document.sourceSessionId;
     if (sessionId) {
-      const session = await this.repositories.sessions.get(sessionId);
+      const session = await this.adapter.get('sessions', sessionId) as SessionRecord;
       if (session) {
         trace.parents.push({
           id: session.id,
@@ -634,7 +680,8 @@ export class ProvenanceQueries {
     }
 
     // Children: canvas blocks
-    const blocks = await this.repositories.canvasBlocks.getByDocumentId(document.id);
+    const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+    const blocks = allBlocks.filter(block => block.documentId === document.id);
     blocks.forEach(block => {
       trace.children.push({
         id: block.id,
@@ -647,7 +694,7 @@ export class ProvenanceQueries {
 
   private async buildCanvasBlockProvenance(trace: ProvenanceTrace, block: CanvasBlockRecord): Promise<void> {
     // Parent: document
-    const document = await this.repositories.documents.get(block.documentId);
+    const document = await this.adapter.get('documents', block.documentId) as DocumentRecord;
     if (document) {
       trace.parents.push({
         id: document.id,
@@ -658,22 +705,22 @@ export class ProvenanceQueries {
 
       // Grandparent: session
       const sessionId = document.sessionId || document.sourceSessionId;
-    if (sessionId) {
-      const session = await this.repositories.sessions.get(sessionId);
-      if (session) {
-        trace.parents.push({
-          id: session.id,
-          type: 'session',
-          relationship: 'belongsTo',
-          data: session
-        });
-      }
+      if (sessionId) {
+        const session = await this.adapter.get('sessions', sessionId) as SessionRecord;
+        if (session) {
+          trace.parents.push({
+            id: session.id,
+            type: 'session',
+            relationship: 'belongsTo',
+            data: session
+          });
+        }
       }
     }
 
     // Parent block (if hierarchical)
     if (block.parentId) {
-      const parentBlock = await this.repositories.canvasBlocks.get(block.parentId);
+      const parentBlock = await this.adapter.get('canvasBlocks', block.parentId) as CanvasBlockRecord;
       if (parentBlock) {
         trace.parents.push({
           id: parentBlock.id,
@@ -685,7 +732,8 @@ export class ProvenanceQueries {
     }
 
     // Child blocks
-    const childBlocks = await this.repositories.canvasBlocks.getByParentId(block.id);
+    const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+    const childBlocks = allBlocks.filter(child => child.parentId === block.id);
     childBlocks.forEach(child => {
       trace.children.push({
         id: child.id,
@@ -698,7 +746,8 @@ export class ProvenanceQueries {
 
   private async buildGenericProvenance(trace: ProvenanceTrace, entityId: string, entityType: string): Promise<void> {
     // Find metadata for this entity
-    const metadata = await this.repositories.metadata.getByEntityId(entityId);
+    const allMetadata = await this.adapter.getAll('metadata') as MetadataRecord[];
+    const metadata = allMetadata.filter(meta => meta.entityId === entityId);
     metadata.forEach(meta => {
       trace.related.push({
         id: meta.id,

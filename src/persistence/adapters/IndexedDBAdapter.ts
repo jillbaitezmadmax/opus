@@ -48,6 +48,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
 
   // Lifecycle methods
   async initialize(config: PersistenceConfig = {}): Promise<void> {
+    console.warn('persistence:init - Starting IndexedDBAdapter initialization');
+    
     this.config = {
       dbName: 'htos-db',
       dbVersion: 1,
@@ -55,11 +57,27 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
       timeout: 30000,
       autoCleanup: true,
       cleanupInterval: 24 * 60 * 60 * 1000, // 24 hours
-      ...config
+      ...(config || {})
     };
 
     try {
       this.db = await openDatabase();
+      
+      // Runtime assertions - verify DB is properly opened
+      if (!this.db) {
+        console.error('persistence:init - Database failed to open');
+        throw new Error('IndexedDB failed to open - database is null');
+      }
+      
+      // Verify required object stores exist
+      const requiredStores = ['sessions', 'threads', 'turns', 'provider_responses', 'documents', 'canvas_blocks', 'ghosts', 'provider_contexts', 'metadata'];
+      const missingStores = requiredStores.filter(storeName => !this.db!.objectStoreNames.contains(storeName));
+      
+      if (missingStores.length > 0) {
+        console.error('persistence:init - Missing required object stores:', missingStores);
+        throw new Error(`IndexedDB missing required object stores: ${missingStores.join(', ')}`);
+      }
+      
       this.repositories = createRepositories(this.db);
 
       if (this.config.autoCleanup) {
@@ -68,10 +86,12 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
 
       this.emit('ready');
       
+      console.warn('persistence adapter initialized');
       if (this.config.debug) {
         console.log('[IndexedDBAdapter] Initialized successfully');
       }
     } catch (error) {
+      console.error('persistence:init - Initialization failed:', error);
       this.emit('error', error);
       throw error;
     }

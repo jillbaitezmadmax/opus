@@ -63,20 +63,97 @@ const lastStreamState = new Map();
 
 function makeDelta(sessionId, providerId, fullText = "") {
   if (!sessionId) return fullText || "";
+  
   const key = `${sessionId}:${providerId}`;
   const prev = lastStreamState.get(key) || "";
   let delta = "";
 
-  if (fullText && fullText.length > prev.length) {
-    delta = fullText.slice(prev.length);
-  } else if (fullText && fullText !== prev) {
+  // CASE 1: First emission (prev is empty) — always emit full text
+  if (prev.length === 0 && fullText && fullText.length > 0) {
     delta = fullText;
+    lastStreamState.set(key, fullText);
+    logger.stream('First emission:', { providerId, textLength: fullText.length });
+    return delta;
   }
 
-  lastStreamState.set(key, fullText || "");
-  return delta;
+  // CASE 2: Normal streaming append (new text added)
+  if (fullText && fullText.length > prev.length) {
+    // Find longest common prefix to handle small inline edits
+    let prefixLen = 0;
+    const minLen = Math.min(prev.length, fullText.length);
+    
+    while (prefixLen < minLen && prev[prefixLen] === fullText[prefixLen]) {
+      prefixLen++;
+    }
+    
+    // If common prefix >= 90% of previous text, treat as append
+    if (prefixLen >= prev.length * 0.9) {
+      delta = fullText.slice(prev.length);
+      lastStreamState.set(key, fullText);
+      logger.stream('Incremental append:', { providerId, deltaLen: delta.length });
+    } else {
+      // This is a rewrite, not an append — ignore to prevent duplication
+      logger.warn(`[makeDelta] Non-append ignored for ${providerId}: commonPrefix=${prefixLen}/${prev.length}`);
+    }
+    return delta;
+  }
+
+  // CASE 3: No change (duplicate call with same text) — no-op
+  if (fullText === prev) {
+    logger.stream('Duplicate call (no-op):', { providerId });
+    return "";
+  }
+
+  // CASE 4: Text got shorter (should never happen in streaming) — error state
+  if (fullText.length < prev.length) {
+    logger.error(`[makeDelta] Text regression for ${providerId}:`, { 
+      prevLen: prev.length, 
+      fullLen: fullText.length 
+    });
+    return "";
+  }
+
+  // CASE 5: Fallback (shouldn't reach here, but safe default)
+  return "";
 }
 
+/**
+ * Clear delta cache when session ends (prevents memory leaks)
+ */
+function clearDeltaCache(sessionId) {
+  if (!sessionId) return;
+  
+  const keysToDelete = [];
+  lastStreamState.forEach((_, key) => {
+    if (key.startsWith(`${sessionId}:`)) {
+      keysToDelete.push(key);
+    }
+  });
+  
+  keysToDelete.forEach(key => lastStreamState.delete(key));
+  logger.debug(`[makeDelta] Cleared ${keysToDelete.length} cache entries for session ${sessionId}`);
+}
+// =============================================================================
+// SMART CONSOLE FILTER FOR DEV TOOLS
+// =============================================================================
+
+const STREAMING_DEBUG = false; // ✅ Set to true to see streaming deltas
+
+/**
+ * Filtered logger: Hides streaming noise unless explicitly enabled
+ */
+const logger = {
+  // Streaming-specific logs (hidden by default)
+  stream: (...args) => {
+    if (STREAMING_DEBUG) console.debug('[STREAM]', ...args);
+  },
+  
+  // Always show these
+  debug: console.debug.bind(console),
+  info: console.info.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console)
+};
 // =============================================================================
 // WORKFLOW ENGINE - FIXED
 // =============================================================================
@@ -174,6 +251,9 @@ export class WorkflowEngine {
     
         // 3. Signal completion.
     this.port.postMessage({ type: 'WORKFLOW_COMPLETE', sessionId: context.sessionId, workflowId: request.workflowId, finalResults: Object.fromEntries(stepResults) });
+    
+    // ✅ Clean up delta cache
+    clearDeltaCache(context.sessionId);
     // Persist the completed turn if applicable
     try { this._persistCompletedTurn(context, steps, stepResults); } catch (e) { console.warn('[WorkflowEngine] Persist turn failed:', e); }
         
@@ -293,57 +373,88 @@ export class WorkflowEngine {
         useThinking,
         providerContexts,
         onPartial: (providerId, chunk) => {
-          console.log(`[Engine] onPartial RAW:`, providerId, typeof chunk, chunk);
-          const delta = makeDelta(context.sessionId, providerId, chunk.text);
-          this.port.postMessage({ 
-            type: 'PARTIAL_RESULT', 
-            sessionId: context.sessionId, 
-            stepId: step.stepId, 
-            providerId, 
-            chunk: { text: delta } 
-          });
-          console.log(`[Engine] Sending PARTIAL_RESULT:`, { stepId: step.stepId, providerId, deltaLength: delta.length });
-        },
-        onAllComplete: (results, errors) => {
-          // Save contexts
-          results.forEach((res, pid) => {
-            this.sessionManager.updateProviderContext(
-              context.sessionId, 
-              pid, 
-              res, 
-              true, 
-              { skipSave: true }
-            );
-          });
-          this.sessionManager.saveSession(context.sessionId);
-
-          // Convert Map to proper format for next steps
-          const formattedResults = {};
-          results.forEach((result, providerId) => {
-            formattedResults[providerId] = {
-              providerId: providerId,
-              text: result.text || '', // ✅ Extract text explicitly
-              status: result.status || 'completed',
-              meta: result.meta || {}
-            };
-          });
-
-          // Check if any provider actually succeeded
-          const hasValidResults = Object.values(formattedResults).some(
-            r => r.status === 'completed' && r.text && r.text.trim().length > 0
-          );
-
-          if (!hasValidResults) {
-            reject(new Error('All providers failed or returned empty responses'));
-            return;
-          }
-
-          resolve({ 
-            results: formattedResults,
-            errors: errors ? Object.fromEntries(errors) : {}
-          });
-        }
-      });
+  const delta = makeDelta(context.sessionId, providerId, chunk.text);
+  
+  // ✅ Only dispatch non-empty deltas
+  if (delta && delta.length > 0) {
+    this.port.postMessage({ 
+      type: 'PARTIAL_RESULT', 
+      sessionId: context.sessionId, 
+      stepId: step.stepId, 
+      providerId, 
+      chunk: { text: delta } 
+    });
+    logger.stream('Delta dispatched:', { stepId: step.stepId, providerId, len: delta.length });
+  } else {
+    logger.stream('Delta skipped (empty):', { stepId: step.stepId, providerId });
+  }
+},
+         // ========= START: RECOMMENDED IMPLEMENTATION (STEP 3) ========= 
+         onAllComplete: (results, errors) => { 
+           // `results` now contains successfully resolved providers (including soft-errors) 
+           // `errors` contains providers that failed hard (e.g., not found, network error before streaming) 
+           
+           // Persist contexts for all successful providers 
+           results.forEach((res, pid) => { 
+             this.sessionManager.updateProviderContext( 
+               context.sessionId, 
+               pid, 
+               res, 
+               true, 
+               { skipSave: true } 
+             ); 
+           }); 
+           this.sessionManager.saveSession(context.sessionId); 
+           
+           // ... (final emission logic for non-streaming providers remains the same) ... 
+ 
+           const formattedResults = {}; 
+           
+           // Process successful results 
+           results.forEach((result, providerId) => { 
+             const hasText = result.text && result.text.trim().length > 0; 
+             formattedResults[providerId] = { 
+               providerId: providerId, 
+               text: result.text || '', 
+               // A successful result from the orchestrator always has 'completed' status now 
+               status: 'completed', 
+               meta: result.meta || {}, 
+               // Explicitly include the softError if it was normalized by the orchestrator 
+               ...(result.softError ? { softError: result.softError } : {}) 
+             }; 
+           }); 
+           
+           // Process hard errors 
+           errors.forEach((error, providerId) => { 
+             formattedResults[providerId] = { 
+               providerId: providerId, 
+               text: '', 
+               status: 'failed', 
+               meta: { _rawError: error.message } 
+             }; 
+           }); 
+ 
+           // Check if AT LEAST ONE provider produced usable text. 
+           const hasAnyValidResults = Object.values(formattedResults).some( 
+             r => r.status === 'completed' && r.text && r.text.trim().length > 0 
+           ); 
+ 
+           if (!hasAnyValidResults) { 
+             // Only reject if the entire batch produced absolutely no text. 
+             reject(new Error('All providers failed or returned empty responses')); 
+             return; 
+           } 
+           
+           // Resolve with the complete picture of the batch execution. 
+           // Downstream steps like synthesis will naturally filter for 'completed' status. 
+           resolve({ 
+             results: formattedResults, 
+             // We can still pass along hard errors for logging if needed 
+             errors: Object.fromEntries(errors) 
+           }); 
+         } 
+         // ========= END: RECOMMENDED IMPLEMENTATION ========= 
+       });
     });
   }
 
@@ -474,19 +585,36 @@ export class WorkflowEngine {
         useThinking: payload.useThinking,
         providerContexts: Object.keys(providerContexts).length ? providerContexts : undefined,
         onPartial: (providerId, chunk) => {
-          console.log(`[Engine] onPartial RAW:`, providerId, typeof chunk, chunk);
-          const delta = makeDelta(context.sessionId, providerId, chunk.text);
-          this.port.postMessage({ 
-            type: 'PARTIAL_RESULT', 
-            sessionId: context.sessionId, 
-            stepId: step.stepId, 
-            providerId, 
-            chunk: { text: delta } 
-          });
-          console.log(`[Engine] Sending PARTIAL_RESULT:`, { stepId: step.stepId, providerId, deltaLength: delta.length });
-        },
+  const delta = makeDelta(context.sessionId, providerId, chunk.text);
+  
+  if (delta && delta.length > 0) {
+    this.port.postMessage({ 
+      type: 'PARTIAL_RESULT', 
+      sessionId: context.sessionId, 
+      stepId: step.stepId, 
+      providerId, 
+      chunk: { text: delta } 
+    });
+    logger.stream('Synthesis delta:', { stepId: step.stepId, providerId, len: delta.length });
+  }
+},
         onAllComplete: (results) => {
           const finalResult = results.get(payload.synthesisProvider);
+          
+          // ✅ Ensure final emission for synthesis
+          if (finalResult?.text) {
+            const delta = makeDelta(context.sessionId, payload.synthesisProvider, finalResult.text);
+            if (delta && delta.length > 0) {
+              this.port.postMessage({  
+                type: 'PARTIAL_RESULT',  
+                sessionId: context.sessionId,  
+                stepId: step.stepId,  
+                providerId: payload.synthesisProvider,  
+                chunk: { text: delta, isFinal: true }  
+              }); 
+              logger.stream('Final synthesis emission:', { providerId: payload.synthesisProvider, len: delta.length }); 
+            } 
+          }
           
           if (!finalResult || !finalResult.text) {
             reject(new Error(`Synthesis provider ${payload.synthesisProvider} returned empty response`));
@@ -558,19 +686,36 @@ export class WorkflowEngine {
         useThinking: payload.useThinking,
         providerContexts: Object.keys(providerContexts).length ? providerContexts : undefined,
         onPartial: (providerId, chunk) => {
-          console.log(`[Engine] onPartial RAW:`, providerId, typeof chunk, chunk);
-          const delta = makeDelta(context.sessionId, providerId, chunk.text);
-          this.port.postMessage({ 
-            type: 'PARTIAL_RESULT', 
-            sessionId: context.sessionId, 
-            stepId: step.stepId, 
-            providerId, 
-            chunk: { text: delta } 
-          });
-          console.log(`[Engine] Sending PARTIAL_RESULT:`, { stepId: step.stepId, providerId, deltaLength: delta.length });
-        },
+  const delta = makeDelta(context.sessionId, providerId, chunk.text);
+  
+  if (delta && delta.length > 0) {
+    this.port.postMessage({ 
+      type: 'PARTIAL_RESULT', 
+      sessionId: context.sessionId, 
+      stepId: step.stepId, 
+      providerId, 
+      chunk: { text: delta } 
+    });
+    logger.stream('Ensemble delta:', { stepId: step.stepId, providerId, len: delta.length });
+  }
+},
         onAllComplete: (results) => {
           const finalResult = results.get(payload.ensembleProvider);
+          
+          // ✅ Ensure final emission for ensemble
+          if (finalResult?.text) {
+            const delta = makeDelta(context.sessionId, payload.ensembleProvider, finalResult.text);
+            if (delta && delta.length > 0) {
+              this.port.postMessage({  
+                type: 'PARTIAL_RESULT',  
+                sessionId: context.sessionId,  
+                stepId: step.stepId,  
+                providerId: payload.ensembleProvider,  
+                chunk: { text: delta, isFinal: true }  
+              }); 
+              logger.stream('Final ensemble emission:', { providerId: payload.ensembleProvider, len: delta.length }); 
+            } 
+          }
           
           if (!finalResult || !finalResult.text) {
             reject(new Error(`Ensemble provider ${payload.ensembleProvider} returned empty response`));

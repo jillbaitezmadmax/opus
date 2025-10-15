@@ -1,9 +1,11 @@
 import { AiTurn, ProviderResponse, AppStep } from '../types';
 import ProviderResponseBlock from './ProviderResponseBlock';
-import { useMemo } from 'react';
+import { CodeBlockWrapper } from './CodeBlockWrapper';
+import { useMemo, useState } from 'react';
 import { hasComposableContent } from '../utils/composerUtils';
 import { LLM_PROVIDERS_CONFIG } from '../constants';
 import ClipsCarousel from './ClipsCarousel';
+import { ChevronDownIcon, ChevronUpIcon } from './Icons'; // FIX: Import icons
 
 interface AiTurnBlockProps {
   aiTurn: AiTurn;
@@ -31,6 +33,8 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
   activeEnsembleClipProviderId,
   onClipClick,
 }) => {
+  const [isSynthesisExpanded, setIsSynthesisExpanded] = useState(true); // FIX: Add state for expand/collapse
+  const [isEnsembleExpanded, setIsEnsembleExpanded] = useState(true); // FIX: Add state for expand/collapse
   // Normalize responses
   const synthesisResponses = useMemo(() => {
     const map = aiTurn.synthesisResponses || {};
@@ -52,17 +56,18 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
 
   // Prepare source content (batch + hidden)
   const allSources = useMemo(() => {
-    const sources = { ...(aiTurn.batchResponses || {}) };
+    const sources: Record<string, ProviderResponse> = { ...(aiTurn.batchResponses || {}) };
     if (aiTurn.hiddenBatchOutputs) {
-      Object.entries(aiTurn.hiddenBatchOutputs).forEach(([providerId, text]) => {
+      Object.entries(aiTurn.hiddenBatchOutputs).forEach(([providerId, response]) => {
         if (!sources[providerId]) {
+          const typedResponse = response as ProviderResponse; // Cast for type safety
           sources[providerId] = {
             providerId,
-            text: typeof text === 'string' ? text : (text as any)?.text || '',
+            text: typedResponse.text || '',
             status: 'completed' as const,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          } as any;
+            createdAt: typedResponse.createdAt || Date.now(),
+            updatedAt: typedResponse.updatedAt || Date.now(),
+          } as ProviderResponse;
         }
       });
     }
@@ -103,14 +108,21 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
           <div className="synthesis-section" style={{ border: '1px solid #475569', borderRadius: 8, padding: 12, flex: 1 }}>
             <div className="section-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>Synthesis</h4>
+              {/* FIX: Add toggle button */}
+              <button onClick={() => setIsSynthesisExpanded(p => !p)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}>
+                {isSynthesisExpanded ? <ChevronUpIcon style={{width: 16, height: 16}} /> : <ChevronDownIcon style={{width: 16, height: 16}} />}
+              </button>
             </div>
-            <ClipsCarousel
-              providers={LLM_PROVIDERS_CONFIG}
-              responsesMap={synthesisResponses}
-              activeProviderId={activeSynthPid}
-              onClipClick={(pid) => onClipClick?.('synthesis', pid)}
-            />
-            <div className="clip-content" style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
+            {/* FIX: Conditionally render content */}
+            {isSynthesisExpanded && (
+              <>
+                <ClipsCarousel
+                  providers={LLM_PROVIDERS_CONFIG}
+                  responsesMap={synthesisResponses}
+                  activeProviderId={activeSynthPid}
+                  onClipClick={(pid) => onClipClick?.('synthesis', pid)}
+                />
+                <div className="clip-content" style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
               {activeSynthPid ? (
                 (() => {
                   const take = getLatestTake(synthesisResponses[activeSynthPid]);
@@ -118,7 +130,9 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   return (
                     <div>
                       <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeSynthPid} · {take.status}</div>
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, fontSize: 16 }}>{take.text}</div>
+                      <CodeBlockWrapper style={{ lineHeight: 1.7, fontSize: 16 }}>
+                        {String(take.text || '')}
+                      </CodeBlockWrapper>
                     </div>
                   );
                 })()
@@ -126,20 +140,29 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                 <div style={{ color: '#64748b' }}>Choose a model to synthesize.</div>
               )}
             </div>
+              </>
+            )}
           </div>
 
           {/* Ensemble Section (Second item in the horizontal row) */}
           <div className="ensemble-section" style={{ border: '1px solid #475569', borderRadius: 8, padding: 12, flex: 1 }}>
             <div className="section-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>Ensemble</h4>
+              {/* FIX: Add toggle button */}
+              <button onClick={() => setIsEnsembleExpanded(p => !p)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}>
+                {isEnsembleExpanded ? <ChevronUpIcon style={{width: 16, height: 16}} /> : <ChevronDownIcon style={{width: 16, height: 16}} />}
+              </button>
             </div>
-            <ClipsCarousel
-              providers={LLM_PROVIDERS_CONFIG}
-              responsesMap={ensembleResponses}
-              activeProviderId={activeEnsemblePid}
-              onClipClick={(pid) => onClipClick?.('ensemble', pid)}
-            />
-            <div className="clip-content" style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
+            {/* FIX: Conditionally render content */}
+            {isEnsembleExpanded && (
+                <>
+                  <ClipsCarousel
+                    providers={LLM_PROVIDERS_CONFIG}
+                    responsesMap={ensembleResponses}
+                    activeProviderId={activeEnsemblePid}
+                    onClipClick={(pid) => onClipClick?.('ensemble', pid)}
+                  />
+                  <div className="clip-content" style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
               {activeEnsemblePid ? (
                 (() => {
                   const take = getLatestTake(ensembleResponses[activeEnsemblePid]);
@@ -147,7 +170,9 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   return (
                     <div>
                       <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeEnsemblePid} · {take.status}</div>
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, fontSize: 16 }}>{take.text}</div>
+                      <CodeBlockWrapper style={{ lineHeight: 1.7, fontSize: 16 }}>
+                        {String(take.text || '')}
+                      </CodeBlockWrapper>
                     </div>
                   );
                 })()
@@ -155,6 +180,8 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                 <div style={{ color: '#64748b' }}>Choose a model to ensemble.</div>
               )}
             </div>
+                </>
+            )}
           </div>
         </div>
 

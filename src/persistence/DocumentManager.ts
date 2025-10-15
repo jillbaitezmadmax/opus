@@ -1,5 +1,5 @@
 // Document Manager - Handles document persistence with Slate content decomposition
-// Integrates with repositories to manage documents, canvas blocks, and ghosts
+// Integrates with SimpleIndexedDBAdapter to manage documents, canvas blocks, and ghosts
 
 import { v4 as uuidv4 } from 'uuid';
 import type { 
@@ -10,12 +10,7 @@ import type {
   TurnRecord,
   ProviderResponseRecord
 } from './types';
-import type { DocumentsRepository } from './repositories/DocumentsRepository.js';
-import type { CanvasBlocksRepository } from './repositories/CanvasBlocksRepository.js';
-import type { GhostsRepository } from './repositories/GhostsRepository.js';
-import type { SessionsRepository } from './repositories/SessionsRepository.js';
-import type { TurnsRepository } from './repositories/TurnsRepository.js';
-import type { ProviderResponsesRepository } from './repositories/ProviderResponsesRepository.js';
+import type { SimpleIndexedDBAdapter } from './SimpleIndexedDBAdapter.js';
 
 // Slate.js types for content decomposition
 interface SlateNode {
@@ -74,30 +69,15 @@ export interface DocumentManagerConfig {
 }
 
 export class DocumentManager {
-  private documentsRepo: DocumentsRepository;
-  private canvasBlocksRepo: CanvasBlocksRepository;
-  private ghostsRepo: GhostsRepository;
-  private sessionsRepo: SessionsRepository;
-  private turnsRepo: TurnsRepository;
-  private providerResponsesRepo: ProviderResponsesRepository;
+  private adapter: SimpleIndexedDBAdapter;
   private config: DocumentManagerConfig;
   private autoSaveTimers: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(
-    documentsRepo: DocumentsRepository,
-    canvasBlocksRepo: CanvasBlocksRepository,
-    ghostsRepo: GhostsRepository,
-    sessionsRepo: SessionsRepository,
-    turnsRepo: TurnsRepository,
-    providerResponsesRepo: ProviderResponsesRepository,
+    adapter: SimpleIndexedDBAdapter,
     config: DocumentManagerConfig = {}
   ) {
-    this.documentsRepo = documentsRepo;
-    this.canvasBlocksRepo = canvasBlocksRepo;
-    this.ghostsRepo = ghostsRepo;
-    this.sessionsRepo = sessionsRepo;
-    this.turnsRepo = turnsRepo;
-    this.providerResponsesRepo = providerResponsesRepo;
+    this.adapter = adapter;
     this.config = {
       autoSaveInterval: 2000,
       maxSnapshots: 10,
@@ -136,7 +116,7 @@ export class DocumentManager {
     };
 
     // Save document
-    await this.documentsRepo.put(document);
+    await this.adapter.put('documents', document);
 
     // Decompose content into blocks if enabled
     if (this.config.enableAutoDecomposition && initialContent) {
@@ -150,12 +130,13 @@ export class DocumentManager {
    * Load a document with optional content reconstruction
    */
   async loadDocument(documentId: string, includeBlocks: boolean = false): Promise<DocumentRecord | null> {
-    const document = await this.documentsRepo.get(documentId);
+    const document = await this.adapter.get('documents', documentId) as DocumentRecord | undefined;
     if (!document) return null;
 
     if (includeBlocks) {
       // Reconstruct content from blocks if needed
-      const blocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
+      const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+      const blocks = allBlocks.filter((block) => block.documentId === documentId);
       if (blocks.length > 0) {
         document.canvasContent = await this.reconstructContent(blocks);
       }
@@ -172,7 +153,7 @@ export class DocumentManager {
     updates: Partial<DocumentRecord>,
     content?: SlateDescendant[]
   ): Promise<DocumentRecord> {
-    const existingDoc = await this.documentsRepo.get(documentId);
+    const existingDoc = await this.adapter.get('documents', documentId) as DocumentRecord | undefined;
     if (!existingDoc) {
       throw new Error(`Document ${documentId} not found`);
     }
@@ -203,7 +184,7 @@ export class DocumentManager {
       await this.createSnapshot(documentId, existingDoc);
     }
 
-    await this.documentsRepo.put(updatedDocument);
+    await this.adapter.put('documents', updatedDocument);
     return updatedDocument;
   }
 
@@ -211,24 +192,27 @@ export class DocumentManager {
    * Delete a document and all associated data
    */
   async deleteDocument(documentId: string): Promise<void> {
-    // Delete associated data first
-    const [blocks, ghosts] = await Promise.all([
-      this.canvasBlocksRepo.getByDocumentId(documentId),
-      this.ghostsRepo.getByDocumentId(documentId)
+    // Get all blocks and ghosts for this document
+    const [allBlocks, allGhosts] = await Promise.all([
+      this.adapter.getAll('canvasBlocks') as Promise<CanvasBlockRecord[]>,
+      this.adapter.getAll('ghosts') as Promise<GhostRecord[]>
     ]);
+
+    const blocks = (allBlocks as CanvasBlockRecord[]).filter(block => block.documentId === documentId);
+    const ghosts = (allGhosts as GhostRecord[]).filter(ghost => ghost.documentId === documentId);
 
     // Delete blocks
     for (const block of blocks) {
-      await this.canvasBlocksRepo.delete(block.id);
+      await this.adapter.delete('canvasBlocks', block.id);
     }
 
     // Delete ghosts
     for (const ghost of ghosts) {
-      await this.ghostsRepo.delete(ghost.id);
+      await this.adapter.delete('ghosts', ghost.id);
     }
 
     // Delete the document itself
-    await this.documentsRepo.delete(documentId);
+    await this.adapter.delete('documents', documentId);
   }
 
   /**
@@ -236,9 +220,10 @@ export class DocumentManager {
    */
   private async decomposeContent(documentId: string, content: SlateDescendant[]): Promise<void> {
     // Clear existing blocks
-    const existingBlocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
+    const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+    const existingBlocks = allBlocks.filter((block) => block.documentId === documentId);
     for (const block of existingBlocks) {
-      await this.canvasBlocksRepo.delete(block.id);
+      await this.adapter.delete('canvasBlocks', block.id);
     }
 
     // Create new blocks
@@ -246,7 +231,7 @@ export class DocumentManager {
     for (const node of content) {
       const blocks = await this.nodeToBlocks(documentId, node, order);
       for (const block of blocks) {
-        await this.canvasBlocksRepo.put(block);
+        await this.adapter.put('canvasBlocks', block);
       }
       order += blocks.length;
     }
@@ -352,8 +337,9 @@ export class DocumentManager {
     }
   ): Promise<GhostRecord> {
     // Check for existing ghost with same provenance
-    const existingGhosts = await this.ghostsRepo.getByEntityId(provenance.aiTurnId);
-    const duplicate = existingGhosts.find((ghost: GhostRecord) => 
+    const allGhosts = await this.adapter.getAll('ghosts') as GhostRecord[];
+    const existingGhosts = allGhosts.filter(ghost => ghost.entityId === provenance.aiTurnId);
+    const duplicate = existingGhosts.find(ghost => 
       ghost.documentId === documentId &&
       ghost.provenance?.providerId === provenance.providerId &&
       ghost.provenance?.responseIndex === provenance.responseIndex
@@ -381,7 +367,7 @@ export class DocumentManager {
       isPinned: false
     };
 
-    await this.ghostsRepo.put(ghost);
+    await this.adapter.put('ghosts', ghost);
     return ghost;
   }
 
@@ -389,7 +375,8 @@ export class DocumentManager {
    * Get all ghosts for a document
    */
   async getDocumentGhosts(documentId: string): Promise<GhostRecord[]> {
-    return this.ghostsRepo.getByEntityId(documentId);
+    const allGhosts = await this.adapter.getAll('ghosts') as GhostRecord[];
+    return allGhosts.filter(ghost => ghost.documentId === documentId);
   }
 
   /**
@@ -412,7 +399,7 @@ export class DocumentManager {
       snapshots.splice(0, snapshots.length - this.config.maxSnapshots!);
     }
 
-    await this.documentsRepo.put({
+    await this.adapter.put('documents', {
       ...document,
       snapshots
     });
@@ -426,7 +413,8 @@ export class DocumentManager {
     turns: TurnRecord[];
     responses: ProviderResponseRecord[];
   }> {
-    const blocks = await this.canvasBlocksRepo.getByDocumentId(documentId);
+    const allBlocks = await this.adapter.getAll('canvasBlocks') as CanvasBlockRecord[];
+    const blocks = allBlocks.filter((block) => block.documentId === documentId);
     
     // Extract unique session and turn IDs
     const sessionIds = new Set<string>();
@@ -441,11 +429,15 @@ export class DocumentManager {
 
     // Fetch related records
     const [sessions, turns] = await Promise.all([
-      Promise.all(Array.from(sessionIds).map((id: string) => this.sessionsRepo.get(id))).then((results: (SessionRecord | null)[]) =>
-        results.filter((s: SessionRecord | null): s is SessionRecord => s !== null)
+      Promise.all(Array.from(sessionIds).map(async (id: string) => {
+        return await this.adapter.get('sessions', id) as SessionRecord | undefined;
+      })).then((results: (SessionRecord | undefined)[]) =>
+        results.filter((s): s is SessionRecord => s !== undefined)
       ),
-      Promise.all(Array.from(turnIds).map((id: string) => this.turnsRepo.get(id))).then((results: (TurnRecord | null)[]) =>
-        results.filter((t: TurnRecord | null): t is TurnRecord => t !== null)
+      Promise.all(Array.from(turnIds).map(async (id: string) => {
+        return await this.adapter.get('turns', id) as TurnRecord | undefined;
+      })).then((results: (TurnRecord | undefined)[]) =>
+        results.filter((t): t is TurnRecord => t !== undefined)
       )
     ]);
 
@@ -536,7 +528,7 @@ export class DocumentManager {
       try {
         // Parse compound key: sessionId|turnId|providerId|responseIndex
         const [sessionId, turnId, providerId, responseIndex] = key.split('|');
-        const response = await this.providerResponsesRepo.getByCompoundKey(key);
+        const response = await this.adapter.get('providerResponses', key) as ProviderResponseRecord | undefined;
         if (response) {
           responses.push(response);
         }
@@ -564,21 +556,11 @@ export class DocumentManager {
  * Factory function to create a document manager
  */
 export function createDocumentManager(
-  documentsRepo: DocumentsRepository,
-  canvasBlocksRepo: CanvasBlocksRepository,
-  ghostsRepo: GhostsRepository,
-  sessionsRepo: SessionsRepository,
-  turnsRepo: TurnsRepository,
-  providerResponsesRepo: ProviderResponsesRepository,
+  adapter: SimpleIndexedDBAdapter,
   config?: DocumentManagerConfig
 ): DocumentManager {
   return new DocumentManager(
-    documentsRepo,
-    canvasBlocksRepo,
-    ghostsRepo,
-    sessionsRepo,
-    turnsRepo,
-    providerResponsesRepo,
+    adapter,
     config
   );
 }

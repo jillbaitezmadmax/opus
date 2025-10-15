@@ -63,19 +63,11 @@ export async function initializePersistenceLayer(
   // Create repositories
   const repositories = createRepositories(db);
   
-  // Create query helpers
-  const provenanceQueries = createProvenanceQueries(repositories);
-  
-  // Create document manager with all required repositories
-  const documentManager = createDocumentManager(
-    repositories.documents,
-    repositories.canvasBlocks,
-    repositories.ghosts,
-    repositories.sessions,
-    repositories.turns,
-    repositories.providerResponses,
-    documentManagerConfig
-  );
+  // Create query helpers using the adapter (refactored)
+  const provenanceQueries = createProvenanceQueries(adapter);
+
+  // Create document manager using the adapter (refactored)
+  const documentManager = createDocumentManager(adapter as any, documentManagerConfig);
   
   return {
     adapter,

@@ -13,20 +13,22 @@ interface ChatInputProps {
   canShowEnsemble?: boolean; // ModelTray has >=2 selected and prompt has content
   ensembleTooltip?: string;
   ensembleActive?: boolean; // disable input and toggles while active
+  onHeightChange?: (height: number) => void; // Callback for height changes
 }
 
 const ChatInput = ({
     onSendPrompt,
     onContinuation,
-    isLoading,
-    isReducedMotion = false,
-    activeProviderCount,
-    isVisibleMode,
-    isContinuationMode,
-    onStartEnsemble,
-    canShowEnsemble = false,
-    ensembleTooltip,
-    ensembleActive = false,
+  isLoading,
+  isReducedMotion = false,
+  activeProviderCount,
+  isVisibleMode,
+  isContinuationMode,
+  onStartEnsemble,
+  canShowEnsemble = false,
+  ensembleTooltip,
+  ensembleActive = false,
+  onHeightChange,
 }: ChatInputProps) => {
   const [prompt, setPrompt] = useState("");
   const [saved, setSaved] = useState(false);
@@ -36,9 +38,14 @@ const ChatInput = ({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'; // Reset height
       const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = `${Math.min(scrollHeight, 120)}px`; // Max height 120px
+      const newHeight = Math.min(scrollHeight, 120); // Max height 120px
+      textareaRef.current.style.height = `${newHeight}px`;
+      
+      // Calculate total input area height (textarea + padding + borders)
+      const totalHeight = newHeight + 24 + 2; // 12px padding top/bottom + 1px border top/bottom
+      onHeightChange?.(totalHeight);
     }
-  }, [prompt]);
+  }, [prompt, onHeightChange]);
 
   const handleSubmit = (e?: React.FormEvent | React.KeyboardEvent) => {
     if (e) e.preventDefault();

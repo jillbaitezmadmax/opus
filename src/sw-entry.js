@@ -89,6 +89,7 @@ async function initializePersistence() {
     ]);
     
     console.log('[SW] ✅ Persistence layer initialized');
+    console.warn('persistence adapter initialized');
     persistenceMonitor.endOperation(operationId, { success: true });
     return persistenceLayer;
   } catch (error) {
@@ -106,16 +107,17 @@ async function initializePersistence() {
 // ============================================================================
 // SESSION MANAGER INITIALIZATION
 // ============================================================================
-async function initializeSessionManager() {
+async function initializeSessionManager(persistenceLayer) {
   if (sessionManager) return sessionManager;
   
   try {
+    // ✅ CHANGED: Initialize SessionManager and pass adapter to initialize()
     sessionManager = new SessionManager();
     
     // Ensure backward compatibility with global sessions object
     sessionManager.sessions = __HTOS_SESSIONS;
     
-    await sessionManager.initialize();
+    await sessionManager.initialize(persistenceLayer ? persistenceLayer.adapter : null);
     
     // Migrate legacy sessions if persistence is enabled
     if (HTOS_USE_PERSISTENCE_ADAPTER && sessionManager.migrateLegacySessions) {
@@ -221,32 +223,79 @@ class FaultTolerantOrchestrator {
     this.activeRequests.set(sessionId, { abortControllers });
 
     const providerPromises = providers.map(providerId => {
-      const abortController = new AbortController();
-      abortControllers.set(providerId, abortController);
-      
-      const adapter = providerRegistry.getAdapter(providerId);
-      if (!adapter) {
-        errors.set(providerId, new Error(`Provider ${providerId} not available`));
-        return Promise.resolve();
-      }
+      // This IIFE returns a promise that *always resolves*
+      return (async () => {
+        const abortController = new AbortController();
+        abortControllers.set(providerId, abortController);
+        
+        const adapter = providerRegistry.getAdapter(providerId);
+        if (!adapter) {
+          return {
+            providerId,
+            status: 'rejected',
+            reason: new Error(`Provider ${providerId} not available`)
+          };
+        }
 
-      const request = {
-        originalPrompt: prompt,
-        sessionId,
-        meta: { ...(providerContexts[providerId]?.meta || {}), useThinking }
-      };
+        let aggregatedText = ""; // Buffer for this provider's partials
 
-      return adapter.sendPrompt(
-        request, 
-        (chunk) => onPartial(providerId, typeof chunk === 'string' ? chunk : chunk.text), 
-        abortController.signal
-      )
-        .then(result => results.set(providerId, result))
-        .catch(error => errors.set(providerId, error));
+        const request = {
+          originalPrompt: prompt,
+          sessionId,
+          meta: { ...(providerContexts[providerId]?.meta || {}), useThinking }
+        };
+
+        try {
+          const result = await adapter.sendPrompt(
+            request,
+            (chunk) => {
+              // The original onPartial in the engine expects a chunk object, not just a string
+              const textChunk = typeof chunk === 'string' ? chunk : chunk.text;
+              if (textChunk) {
+                aggregatedText += textChunk;
+              }
+              onPartial(providerId, typeof chunk === 'string' ? { text: chunk } : chunk);
+            },
+            abortController.signal
+          );
+          
+          if (!result.text && aggregatedText) {
+            result.text = aggregatedText;
+          }
+          
+          return { providerId, status: 'fulfilled', value: result };
+
+        } catch (error) {
+          if (aggregatedText) {
+            return {
+              providerId,
+              status: 'fulfilled',
+              value: {
+                text: aggregatedText,
+                meta: {},
+                softError: {
+                  name: error.name,
+                  message: error.message
+                }
+              }
+            };
+          }
+          return { providerId, status: 'rejected', reason: error };
+        }
+      })(); // End of IIFE
     });
 
-    Promise.allSettled(providerPromises).then(() => {
+    Promise.all(providerPromises).then((settledResults) => {
+      settledResults.forEach(item => {
+        if (item.status === 'fulfilled') {
+          results.set(item.providerId, item.value);
+        } else {
+          errors.set(item.providerId, item.reason);
+        }
+      });
+      
       onAllComplete(results, errors);
+      
       this.activeRequests.delete(sessionId);
       if (this.lifecycleManager) this.lifecycleManager.keepalive(false);
     });
@@ -333,12 +382,13 @@ async function initializeGlobalServices() {
     console.log("[SW] 🚀 Initializing global services...");
     
     // 1. Initialize persistence layer FIRST
+    let persistenceLayer = null;
     if (HTOS_USE_PERSISTENCE_ADAPTER) {
-      await initializePersistence();
+      persistenceLayer = await initializePersistence();
     }
     
     // 2. Initialize session manager (depends on persistence)
-    await initializeSessionManager();
+    const sessionManager = await initializeSessionManager(persistenceLayer);
     
     // 3. Initialize infrastructure
     await initializeGlobalInfrastructure();
@@ -357,6 +407,7 @@ async function initializeGlobalServices() {
       orchestrator: self.faultTolerantOrchestrator,
       sessionManager: sessionManager,
       compiler,
+      persistenceLayer, // Expose persistence layer to other modules
     };
   })();
 
@@ -650,14 +701,18 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // ============================================================================
 setInterval(async () => {
   try {
-    if (persistenceLayer?.adapter) {
-      // Cleanup old data
-      await persistenceLayer.adapter.cleanup();
+    if (persistenceLayer?.repositories) {
+      console.log('[SW] Running periodic data cleanup...');
+      const repos = persistenceLayer.repositories;
+      const sessionsCleaned = await repos.sessions.cleanupOldSessions(30);
+      const contextsCleaned = await repos.providerContexts.cleanupOldContexts(30);
+      // Add other repository cleanups as needed
+      console.log(`[SW] Cleanup complete. Removed ${sessionsCleaned} old sessions and ${contextsCleaned} old contexts.`);
     }
   } catch (error) {
     console.error('[SW] Cleanup error:', error);
   }
-}, 60000 * 30); // Every 30 minutes
+}, 60000 * 30);// 30 minutes
 
 // ============================================================================
 // LIFECYCLE HANDLERS
@@ -717,8 +772,8 @@ globalThis.__HTOS_SW = {
 // ============================================================================
 (async () => {
   try {
-    await initializeGlobalServices();
-    SWBootstrap.init();
+    const services = await initializeGlobalServices();
+    SWBootstrap.init(services);
     console.log("[SW] 🚀 Bootstrap complete. System ready.");
     
     // Log health status

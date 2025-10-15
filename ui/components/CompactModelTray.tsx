@@ -24,6 +24,7 @@ interface CompactModelTrayProps {
   // New props for compact mode
   isFirstLoad?: boolean;
   onAcknowledgeFirstLoad?: () => void; // New callback for parent to clear isFirstLoad
+  chatInputHeight?: number; // New prop for dynamic positioning
 }
 
 const CompactModelTray = ({ 
@@ -42,7 +43,8 @@ const CompactModelTray = ({
   synthesisProviders = [],
   onToggleSynthesisProvider,
   isFirstLoad = false,
-  onAcknowledgeFirstLoad
+  onAcknowledgeFirstLoad,
+  chatInputHeight = 80 // Default height
 }: CompactModelTrayProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showModelsDropdown, setShowModelsDropdown] = useState(false);
@@ -100,7 +102,7 @@ const CompactModelTray = ({
         ref={containerRef}
         style={{
           position: 'fixed',
-          bottom: '80px', // Above the chat input
+          bottom: `${chatInputHeight + 16}px`, // FIX: Dynamic bottom position
           left: '50%',
           transform: 'translateX(-50%)',
           width: 'min(800px, calc(100% - 32px))',
@@ -112,6 +114,7 @@ const CompactModelTray = ({
           padding: '16px 20px',
           zIndex: 999,
           textAlign: 'center',
+          transition: 'bottom 0.2s ease-out',
         }}
       >
         <div style={{ 
@@ -164,12 +167,13 @@ const CompactModelTray = ({
       ref={containerRef}
       style={{
         position: 'fixed',
-        bottom: '80px', // Above the chat input
+        bottom: `${chatInputHeight + 16}px`, // FIX: Dynamic bottom position
         left: '50%',
         transform: 'translateX(-50%)',
         width: 'min(800px, calc(100% - 32px))',
         maxHeight: 'calc(100vh - 120px)', // Prevent overlap
         zIndex: 999,
+        transition: 'bottom 0.2s ease-out',
       }}
     >
       {/* Collapsed State */}

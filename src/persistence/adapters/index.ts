@@ -1,14 +1,8 @@
-// Persistence Adapters Index
+// src/persistence/adapters/index.ts
 
-import type {
-  IPersistenceAdapter,
-  PersistenceConfig,
-  QueryOptions,
-  BatchResult,
-  HealthStatus
-} from './IPersistenceAdapter';
-
-import { IndexedDBAdapter } from './IndexedDBAdapter';
+// Import and re-export types and classes with correct extensions
+import { IndexedDBAdapter } from './IndexedDBAdapter.js';
+import type { IPersistenceAdapter, PersistenceConfig, QueryOptions, BatchResult, HealthStatus } from './IPersistenceAdapter.js';
 
 export type {
   IPersistenceAdapter,
@@ -17,7 +11,6 @@ export type {
   BatchResult,
   HealthStatus
 };
-
 export { IndexedDBAdapter };
 
 /**

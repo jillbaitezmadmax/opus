@@ -196,27 +196,51 @@ export class ClaudeSessionApi {
             this._throw("unknown", parsedJson);
         }
         // Process streaming response
-        let fullText = "";
-        let isFirstChunk = true;
-        const reader = response.body.getReader();
-        const carry = { carryOver: "" };
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done)
-                    break;
-                const chunkText = this._parseChunk(value, carry);
-                if (chunkText) {
-                    fullText = (fullText + chunkText).trimStart();
-                    onChunk({ text: fullText, chatId, orgId }, isFirstChunk);
-                    isFirstChunk = false;
-                }
-            }
-        }
-        finally {
-            reader.releaseLock();
-        }
-        return { orgId, chatId, text: fullText };
+        // Process streaming response
+let fullText = "";
+let isFirstChunk = true;
+let softError = null; // Track non-fatal errors
+const reader = response.body.getReader();
+const carry = { carryOver: "" };
+
+try {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    // ✅ _parseChunk now returns {text, error}
+    const result = this._parseChunk(value, carry, fullText.length > 0);
+    
+    if (result.error) {
+      softError = result.error;
+      // Continue processing - don't break
+    }
+    
+   if (result.text) {
+  // Preserve leading whitespace/newlines so code fences and markdown structure are kept intact.
+  fullText = fullText + result.text;
+  onChunk({ text: fullText, chatId, orgId }, isFirstChunk);
+  isFirstChunk = false;
+}
+
+  }
+  
+  // ✅ Grace period for late error frames
+  if (fullText.length > 0) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+} finally {
+  reader.releaseLock();
+}
+
+// ✅ Return with soft-error metadata
+const result = { orgId, chatId, text: fullText };
+if (softError) {
+  result.softError = softError;
+  console.info('[Claude] Completed with soft-error:', softError.error?.message || 'unknown');
+}
+return result;
     }
     /**
      * Update available models for the provider
@@ -243,32 +267,61 @@ export class ClaudeSessionApi {
     // =============================================================================
     // PRIVATE METHODS
     // =============================================================================
-    _parseChunk(chunk, carry) {
-        const lines = new TextDecoder()
-            .decode(chunk)
-            .trim()
-            .split("\n")
-            .filter(line => line.trim().length > 0 && !line.startsWith("event:"));
-        return lines.map((line, idx) => {
-            let parsedData;
-            let result = "";
-            if (idx === 0 && carry.carryOver) {
-                result = carry.carryOver;
-                carry.carryOver = "";
-            }
-            const dataString = result + line.replace("data: ", "");
-            try {
-                parsedData = JSON.parse(dataString);
-            }
-            catch (err) {
-                carry.carryOver = dataString;
-                return "";
-            }
-            if (parsedData.type === "error") {
-                this._throw("failedToReadResponse", parsedData);
-            }
-            return parsedData.completion || "";
-        }).join("");
+    _parseChunk(chunk, carry, hasAccumulatedText = false) { 
+      const lines = new TextDecoder() 
+        .decode(chunk) 
+        .trim() 
+        .split("\n") 
+        .filter(line => line.trim().length > 0 && !line.startsWith("event:")); 
+      
+      let accumulatedText = ""; 
+      let error = null; 
+      
+      // ✅ Use forEach instead of map, build text manually 
+      lines.forEach((line, idx) => { 
+        let parsedData; 
+        let dataPrefix = ""; 
+        
+        if (idx === 0 && carry.carryOver) { 
+          dataPrefix = carry.carryOver; 
+          carry.carryOver = ""; 
+        } 
+        
+        const dataString = dataPrefix + line.replace("data: ", ""); 
+        
+        try { 
+          parsedData = JSON.parse(dataString); 
+        } catch (err) { 
+          carry.carryOver = dataString; 
+          return;  // Skip this line, continue to next 
+        } 
+        
+        // Handle error frames 
+        if (parsedData.type === "error") { 
+          if (hasAccumulatedText) { 
+            error = parsedData; 
+            console.warn('[Claude] Trailing error frame (ignored):', parsedData.error?.message || parsedData); 
+          } else { 
+            this._throw("failedToReadResponse", parsedData); 
+          } 
+          return;  // Don't process text from error frames 
+        } 
+        
+        // Treat both parsed and unparsed frames as valid streaming text
+        // Some Claude streams label interim frames as "unparsed" but they still carry useful text.
+        const segment = 
+          (typeof parsedData.completion === 'string' && parsedData.completion) ||
+          (typeof parsedData.completion_delta === 'string' && parsedData.completion_delta) ||
+          (typeof parsedData.delta === 'string' && parsedData.delta) ||
+          "";
+
+        if (segment) {
+          accumulatedText += segment;
+        }
+      }); 
+      
+      // ✅ ALWAYS return object structure 
+      return { text: accumulatedText, error }; 
     }
     async _createChat(orgId, emoji) {
         const chatId = this.utils?.id?.uuid?.() ||

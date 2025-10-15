@@ -117,23 +117,36 @@ const api = {
    * Used for fetching data like history, not for streaming AI responses.
    */
   async queryBackend<T>(message: { type: string; payload?: any }): Promise<T> {
-    if (!EXTENSION_ID) throw new Error("Extension not connected.");
+    if (!EXTENSION_ID) throw new Error("Extension not connected. Please reload the extension.");
 
     return new Promise<T>((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        EXTENSION_ID as string,
-        message,
-        (response: BackendApiResponse<T>) => {
-          if (chrome.runtime.lastError) {
-            return reject(new Error(chrome.runtime.lastError.message));
+      try {
+        chrome.runtime.sendMessage(
+          EXTENSION_ID as string,
+          message,
+          (response: BackendApiResponse<T>) => {
+            if (chrome.runtime.lastError) {
+              console.error("[API] Connection error:", chrome.runtime.lastError);
+              return reject(new Error(`Extension connection failed: ${chrome.runtime.lastError.message}. Try reloading the extension.`));
+            }
+            
+            if (!response) {
+              console.error("[API] Empty response received");
+              return reject(new Error("No response from extension. The service worker may be inactive."));
+            }
+            
+            if (response?.success) {
+              resolve(response.data as T);
+            } else {
+              console.error("[API] Backend error:", response?.error);
+              reject(new Error(response?.error?.message || "Unknown backend error. Please check extension logs."));
+            }
           }
-          if (response?.success) {
-            resolve(response.data as T);
-          } else {
-            reject(new Error(response?.error?.message || "Unknown backend error."));
-          }
-        }
-      );
+        );
+      } catch (err) {
+        console.error("[API] Fatal extension error:", err);
+        reject(new Error(`Extension communication error: ${err instanceof Error ? err.message : String(err)}`));
+      }
     });
   },
 
@@ -155,10 +168,13 @@ const api = {
   // In the new model, the UI rarely needs to do this manually.
   // It's primarily handled via the workflow context.
   setSessionId(sessionId: string): void {
-    this.ensurePort().then(port => {
-        port.postMessage({ type: 'sync_session', sessionId });
-    });
-  },
+  // The backend now gets the session ID with every workflow request,
+  // so this explicit sync message is no longer necessary.
+  console.log(`[API] setSessionId called for ${sessionId}, but sync is now implicit.`);
+  // this.ensurePort().then(port => {
+  //     port.postMessage({ type: 'sync_session', sessionId });
+  // });
+},
 
   // The UI no longer manages context. These are now NO-OPs or deprecated.
   updateProviderContext(providerId: string, context: any): void {

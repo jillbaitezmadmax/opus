@@ -98,6 +98,8 @@ const App = () => {
   const [thinkEnsembleByRound, setThinkEnsembleByRound] = useState<Record<string, boolean>>({});
   // Historical Clips: active viewing selection per AiTurn
   const [activeClips, setActiveClips] = useState<Record<string, { synthesis?: string; ensemble?: string }>>({});
+  // Chat input height for dynamic positioning
+  const [chatInputHeight, setChatInputHeight] = useState<number>(80);
   
   // Composer Mode state
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.CHAT);
@@ -1759,6 +1761,7 @@ const App = () => {
           synthesisProviders={synthesisProviders}
           onToggleSynthesisProvider={handleToggleSynthesisProvider}
           isFirstLoad={isFirstLoad}
+          chatInputHeight={chatInputHeight}
         />
 
         {viewMode === ViewMode.CHAT && (
@@ -1770,6 +1773,7 @@ const App = () => {
             activeProviderCount={activeProviderCount}
             isVisibleMode={isVisibleMode}
             isContinuationMode={isContinuationMode}
+            onHeightChange={setChatInputHeight}
           />
         )}
       </div>

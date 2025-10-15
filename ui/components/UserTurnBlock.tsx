@@ -1,6 +1,7 @@
 import { UserTurn } from '../types';
 import { UserIcon, ChevronDownIcon, ChevronUpIcon } from './Icons';
 import { useState, useCallback } from 'react';
+import { CodeBlockWrapper } from './CodeBlockWrapper';
 
 
 const CopyButton = ({ text, label, onClick }: { text: string; label: string; onClick?: () => void }) => {
@@ -96,19 +97,18 @@ const UserTurnBlock = ({ userTurn, isExpanded, onToggle }: UserTurnBlockProps) =
 
         {isExpanded ? (
           <>
-            <div
+            <CodeBlockWrapper
               className="user-message"
               style={{
                 fontSize: '14px',
                 lineHeight: '1.5',
                 color: '#f1f5f9',
-                whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 marginBottom: '8px',
               }}
             >
-              {userTurn.text}
-            </div>
+              {String(userTurn.text || '')}
+            </CodeBlockWrapper>
             <div
               className="user-metadata"
               style={{

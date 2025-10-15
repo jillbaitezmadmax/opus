@@ -1,8 +1,8 @@
 // Enhanced SessionManager with Persistence Adapter Integration
 // Supports both legacy chrome.storage and new persistence layer via feature flag
 
-import { createPersistenceAdapter } from './adapters/index.js';
-import { createRepositories } from './repositories/index.js';
+import { SimpleIndexedDBAdapter } from './SimpleIndexedDBAdapter.js';
+import * as chromeStoragePromise from './chromeStoragePromise.js';
 
 // Feature flag for persistence layer (can be controlled via environment or runtime)
 const USE_PERSISTENCE_ADAPTER = globalThis.HTOS_USE_PERSISTENCE_ADAPTER ?? false;
@@ -17,72 +17,48 @@ export class SessionManager {
     this.isExtensionContext = typeof chrome !== 'undefined' && !!chrome.storage?.local;
     this.usePersistenceAdapter = USE_PERSISTENCE_ADAPTER;
     
-    // Persistence layer components
-    this.persistenceAdapter = null;
-    this.repositories = null;
+    // Persistence layer components will be injected
+    this.adapter = null;
     this.isInitialized = false;
-    
-    // Initialize based on feature flag
-    if (this.usePersistenceAdapter) {
-      this.initializePersistenceLayer().catch(console.error);
-    } else if (this.isExtensionContext) {
-      this.loadSessions().catch(console.error);
-    }
   }
 
   /**
-   * Initialize the session manager
+   * Initialize the session manager.
+   * It now accepts the persistence adapter as an argument.
    */
-  async initialize() {
+  async initialize(persistenceAdapter = null) {
     if (this.usePersistenceAdapter) {
-      await this.initializePersistenceLayer();
-    } else if (this.isExtensionContext) {
-      await this.loadSessions();
-    }
-    console.log('[SessionManager] Initialization complete');
-  }
-
-  /**
-   * Initialize the new persistence layer
-   */
-  async initializePersistenceLayer() {
-    try {
-      console.log('[SessionManager] Initializing persistence adapter...');
+      console.log('[SessionManager] Initializing with persistence adapter...');
       
-      // Create and initialize persistence adapter
-      this.persistenceAdapter = createPersistenceAdapter('indexeddb', {
-        dbName: 'HTOS_DB',
-        version: 1
-      });
+      if (persistenceAdapter) {
+        this.adapter = persistenceAdapter;
+      } else {
+        // Create and initialize SimpleIndexedDBAdapter
+        this.adapter = new SimpleIndexedDBAdapter();
+        await this.adapter.init();
+      }
       
-      await this.persistenceAdapter.initialize();
-      
-      // Create repository collection
-      this.repositories = this.persistenceAdapter.repositories;
-      
-      // Migrate existing sessions if needed
       await this.migrateExistingSessions();
-      
       this.isInitialized = true;
-      console.log('[SessionManager] Persistence layer initialized successfully');
-    } catch (error) {
-      console.error('[SessionManager] Failed to initialize persistence layer:', error);
-      // Fallback to legacy storage
-      this.usePersistenceAdapter = false;
+      console.log('[SessionManager] Persistence layer integration successful.');
+    } else {
+      console.log('[SessionManager] Initializing in legacy chrome.storage mode.');
       if (this.isExtensionContext) {
         await this.loadSessions();
       }
+      this.isInitialized = true; // Mark as initialized even for legacy mode
     }
+    console.log('[SessionManager] Initialization complete');
   }
 
   /**
    * Migrate existing chrome.storage sessions to new persistence layer
    */
   async migrateExistingSessions() {
-    if (!this.isExtensionContext || !this.repositories) return;
-    
+    if (!this.isExtensionContext || !this.adapter) return;
+
     try {
-      const data = await chrome.storage.local.get(null);
+      const data = await chromeStoragePromise.get(null);
       const sessionKeys = Object.keys(data).filter(key => key.startsWith(`${this.storageKey}_`));
       
       for (const key of sessionKeys) {
@@ -117,7 +93,7 @@ export class SessionManager {
         updatedAt: legacySession.lastActivity || Date.now()
       };
       
-      await this.repositories.sessions.create(sessionRecord);
+      await this.adapter.put('sessions', sessionRecord);
       
       // Migrate threads
       if (legacySession.threads) {
@@ -133,7 +109,7 @@ export class SessionManager {
             updatedAt: thread.lastActivity || Date.now()
           };
           
-          await this.repositories.threads.create(threadRecord);
+          await this.adapter.put('threads', threadRecord);
         }
       }
       
@@ -152,7 +128,7 @@ export class SessionManager {
             updatedAt: turn.updatedAt || Date.now()
           };
           
-          await this.repositories.turns.create(turnRecord);
+          await this.adapter.put('turns', turnRecord);
         }
       }
       
@@ -170,7 +146,7 @@ export class SessionManager {
             updatedAt: context.lastUpdated || Date.now()
           };
           
-          await this.repositories.providerContexts.create(contextRecord);
+          await this.adapter.put('provider_contexts', contextRecord);
         }
       }
       
@@ -201,7 +177,7 @@ export class SessionManager {
   async getOrCreateSessionWithPersistence(sessionId) {
     try {
       // Try to get existing session
-      let sessionRecord = await this.repositories.sessions.get(sessionId);
+      let sessionRecord = await this.adapter.get('sessions', sessionId);
       
       if (!sessionRecord) {
         // Create new session
@@ -215,7 +191,7 @@ export class SessionManager {
           updatedAt: Date.now()
         };
         
-        await this.repositories.sessions.create(sessionRecord);
+        await this.adapter.put('sessions', sessionRecord);
         
         // Create default thread
         const defaultThread = {
@@ -229,7 +205,7 @@ export class SessionManager {
           updatedAt: Date.now()
         };
         
-        await this.repositories.threads.create(defaultThread);
+        await this.adapter.put('threads', defaultThread);
       }
       
       // Build legacy-compatible session object for backward compatibility
@@ -280,11 +256,12 @@ export class SessionManager {
    */
   async buildLegacySessionObject(sessionId) {
     try {
-      const sessionRecord = await this.repositories.sessions.get(sessionId);
+      const sessionRecord = await this.adapter.get('sessions', sessionId);
       if (!sessionRecord) return null;
       
-      // Get threads
-      const threads = await this.repositories.threads.getBySessionId(sessionId);
+      // Get threads - using getAll and filtering by sessionId
+      const allThreads = await this.adapter.getAll('threads');
+      const threads = allThreads.filter(thread => thread.sessionId === sessionId);
       const threadsObj = {};
       threads.forEach(thread => {
         threadsObj[thread.id] = {
@@ -300,8 +277,9 @@ export class SessionManager {
         };
       });
       
-      // Get turns
-      const turns = await this.repositories.turns.getBySessionId(sessionId);
+      // Get turns - using getAll and filtering by sessionId
+      const allTurns = await this.adapter.getAll('turns');
+      const turns = allTurns.filter(turn => turn.sessionId === sessionId);
       const turnsArray = turns.map(turn => ({
         id: turn.id,
         type: turn.role,
@@ -311,8 +289,9 @@ export class SessionManager {
         updatedAt: turn.updatedAt
       }));
       
-      // Get provider contexts
-      const contexts = await this.repositories.providerContexts.getBySessionId(sessionId);
+      // Get provider contexts - using getAll and filtering by sessionId
+      const allContexts = await this.adapter.getAll('provider_contexts');
+      const contexts = allContexts.filter(context => context.sessionId === sessionId);
       const providersObj = {};
       contexts.forEach(context => {
         providersObj[context.providerId] = {
@@ -343,7 +322,7 @@ export class SessionManager {
   async loadSessions() {
     if (!this.isExtensionContext) return;
     try {
-      const data = await chrome.storage.local.get(null);
+      const data = await chromeStoragePromise.get(null);
       const sessionKeys = Object.keys(data).filter(key => key.startsWith(`${this.storageKey}_`));
       for (const key of sessionKeys) {
         const sessionId = key.replace(`${this.storageKey}_`, '');
@@ -393,10 +372,12 @@ export class SessionManager {
       if (!session) return;
       
       // Update session record
-      await this.repositories.sessions.update(sessionId, {
-        title: session.title,
-        updatedAt: Date.now()
-      });
+      const sessionRecord = await this.adapter.get('sessions', sessionId);
+      if (sessionRecord) {
+        sessionRecord.title = session.title;
+        sessionRecord.updatedAt = Date.now();
+        await this.adapter.put('sessions', sessionRecord);
+      }
       
       console.log(`[SessionManager] Saved session ${sessionId} to persistence layer`);
     } catch (error) {
@@ -413,7 +394,7 @@ export class SessionManager {
     if (!this.isExtensionContext || !this.sessions[sessionId]) return;
     try {
       const sessionKey = `${this.storageKey}_${sessionId}`;
-      await chrome.storage.local.set({ [sessionKey]: this.sessions[sessionId] });
+      await chromeStoragePromise.set({ [sessionKey]: this.sessions[sessionId] });
       console.log(`[SessionManager] Saved session ${sessionId} to chrome.storage`);
     } catch (error) {
       console.error(`[SessionManager] Failed to save session ${sessionId} to chrome.storage:`, error);
@@ -438,8 +419,9 @@ export class SessionManager {
     try {
       const session = await this.getOrCreateSession(sessionId);
       
-      // Get next sequence numbers
-      const existingTurns = await this.repositories.turns.getBySessionId(sessionId);
+      // Get next sequence numbers - using getAll and filtering by sessionId
+      const allTurns = await this.adapter.getAll('turns');
+      const existingTurns = allTurns.filter(turn => turn.sessionId === sessionId);
       let nextSequence = existingTurns.length;
       
       // Add user turn
@@ -455,7 +437,7 @@ export class SessionManager {
           updatedAt: Date.now()
         };
         
-        await this.repositories.turns.create(userTurnRecord);
+        await this.adapter.put('turns', userTurnRecord);
         
         // Add to legacy session for compatibility
         session.turns = session.turns || [];
@@ -475,7 +457,7 @@ export class SessionManager {
           updatedAt: Date.now()
         };
         
-        await this.repositories.turns.create(aiTurnRecord);
+        await this.adapter.put('turns', aiTurnRecord);
         
         // Add to legacy session for compatibility
         session.turns = session.turns || [];
@@ -485,10 +467,12 @@ export class SessionManager {
       // Update session title and activity
       if (!session.title && userTurn?.text) {
         session.title = String(userTurn.text).slice(0, 50);
-        await this.repositories.sessions.update(sessionId, {
-          title: session.title,
-          updatedAt: Date.now()
-        });
+        const sessionRecord = await this.adapter.get('sessions', sessionId);
+        if (sessionRecord) {
+          sessionRecord.title = session.title;
+          sessionRecord.updatedAt = Date.now();
+          await this.adapter.put('sessions', sessionRecord);
+        }
       }
       
       session.lastActivity = Date.now();
@@ -534,22 +518,25 @@ export class SessionManager {
   async deleteSessionWithPersistence(sessionId) {
     try {
       // Delete from persistence layer
-      await this.repositories.sessions.delete(sessionId);
+      await this.adapter.delete('sessions', sessionId);
       
-      // Delete related data
-      const threads = await this.repositories.threads.getBySessionId(sessionId);
+      // Delete related data - using getAll and filtering by sessionId
+      const allThreads = await this.adapter.getAll('threads');
+      const threads = allThreads.filter(thread => thread.sessionId === sessionId);
       for (const thread of threads) {
-        await this.repositories.threads.delete(thread.id);
+        await this.adapter.delete('threads', thread.id);
       }
       
-      const turns = await this.repositories.turns.getBySessionId(sessionId);
+      const allTurns = await this.adapter.getAll('turns');
+      const turns = allTurns.filter(turn => turn.sessionId === sessionId);
       for (const turn of turns) {
-        await this.repositories.turns.delete(turn.id);
+        await this.adapter.delete('turns', turn.id);
       }
       
-      const contexts = await this.repositories.providerContexts.getBySessionId(sessionId);
+      const allContexts = await this.adapter.getAll('provider_contexts');
+      const contexts = allContexts.filter(context => context.sessionId === sessionId);
       for (const context of contexts) {
-        await this.repositories.providerContexts.delete(context.id);
+        await this.adapter.delete('provider_contexts', context.id);
       }
       
       // Delete from memory
@@ -613,8 +600,11 @@ export class SessionManager {
     try {
       const session = await this.getOrCreateSession(sessionId);
       
-      // Get or create provider context
-      const contexts = await this.repositories.providerContexts.getByProviderAndSession(providerId, sessionId);
+      // Get or create provider context - using getAll and filtering
+      const allContexts = await this.adapter.getAll('provider_contexts');
+      const contexts = allContexts.filter(context => 
+        context.providerId === providerId && context.sessionId === sessionId
+      );
       let contextRecord = contexts[0]; // Get the most recent one
       
       if (!contextRecord) {
@@ -642,11 +632,7 @@ export class SessionManager {
       contextRecord.updatedAt = Date.now();
       
       // Save or update context
-      if (contexts.length > 0) {
-        await this.repositories.providerContexts.update(contextRecord.id, contextRecord);
-      } else {
-        await this.repositories.providerContexts.create(contextRecord);
-      }
+      await this.adapter.put('provider_contexts', contextRecord);
       
       // Update legacy session for compatibility
       session.providers = session.providers || {};
@@ -718,7 +704,10 @@ export class SessionManager {
       const session = await this.getOrCreateSession(sessionId);
       const threadId = `thread-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      const existingThreads = await this.repositories.threads.getBySessionId(sessionId);
+      // Get existing threads - using getAll and filtering by sessionId
+      const allThreads = await this.adapter.getAll('threads');
+      const existingThreads = allThreads.filter(thread => thread.sessionId === sessionId);
+      
       const threadRecord = {
         id: threadId,
         sessionId: sessionId,
@@ -730,7 +719,7 @@ export class SessionManager {
         updatedAt: Date.now()
       };
       
-      await this.repositories.threads.create(threadRecord);
+      await this.adapter.put('threads', threadRecord);
       
       // Add to legacy session for compatibility
       session.threads = session.threads || {};
@@ -798,14 +787,18 @@ export class SessionManager {
         throw new Error(`Thread ${threadId} not found in session ${sessionId}`);
       }
       
-      // Update all threads in persistence layer
-      const threads = await this.repositories.threads.getBySessionId(sessionId);
+      // Update all threads in persistence layer - using getAll and filtering by sessionId
+      const allThreads = await this.adapter.getAll('threads');
+      const threads = allThreads.filter(thread => thread.sessionId === sessionId);
+      
       for (const thread of threads) {
         const isActive = thread.id === threadId;
-        await this.repositories.threads.update(thread.id, {
+        const updatedThread = {
+          ...thread,
           isActive: isActive,
           updatedAt: isActive ? Date.now() : thread.updatedAt
-        });
+        };
+        await this.adapter.put('threads', updatedThread);
       }
       
       // Update legacy session for compatibility

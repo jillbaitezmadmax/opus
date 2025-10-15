@@ -107,6 +107,7 @@ export interface AiTurn extends Omit<ContractAiTurn, 'type'> {
   type: 'ai';
   // Add UI-specific properties
   composerState?: ComposerState;
+  hiddenBatchOutputs?: Record<string, ProviderResponse>;
   
   // DEPRECATED BUT KEPT FOR TRANSITION:
   /** @deprecated Use `batchResponses`, `synthesisResponses`, or `ensembleResponses` instead. */

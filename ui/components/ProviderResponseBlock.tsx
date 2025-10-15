@@ -7,6 +7,7 @@ import { useLaneRailState } from './lanes/useLaneRailState';
 import { getProviderById } from '../providers/providerRegistry';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ProviderPill } from './ProviderPill';
+import { CodeBlockWrapper } from './CodeBlockWrapper';
 
 // Legacy interface for backward compatibility
 interface ProviderState {
@@ -89,6 +90,7 @@ const ProviderResponseBlock = ({
   }, {} as ProviderStates);
 
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
+  const [forceCollapse, setForceCollapse] = useState(false); // FIX: State for global collapse
   const [blockMinHeight, setBlockMinHeight] = useState<string>('calc(100vh / 6)');
 
   // Calculate min-height for responsive block sizing (~1/6 viewport)
@@ -126,16 +128,19 @@ const ProviderResponseBlock = ({
       ...prev,
       [providerId]: !prev[providerId]
     }));
+    setForceCollapse(false); // FIX: User action overrides global collapse
   };
 
   const handleExpandAll = () => {
     const allProviders = Object.keys(filteredProviderStates);
     const allExpanded = allProviders.reduce((acc, id) => ({ ...acc, [id]: true }), {} as Record<string, boolean>);
     setExpandedProviders(allExpanded);
+    setForceCollapse(false); // FIX: User action overrides global collapse
   };
 
   const handleCollapseAll = () => {
     setExpandedProviders({});
+    setForceCollapse(true); // FIX: Set global collapse flag
   };
 
   const handleCopyAll = () => {
@@ -309,15 +314,19 @@ const ProviderResponseBlock = ({
                       <div className="provider-content" style={{ flex: 1, cursor: isExpanded ? 'default' : 'pointer', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={!isExpanded ? () => toggleExpanded(providerId) : undefined}>
                         {/* Collapsed Gist */}
                         {!isExpanded && (
-                          <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', height: 'calc(1.5em * 2)' }}>
-                            {state?.text || getStatusText(state?.status)}
-                            {isStreaming && !state?.text && <span className="streaming-dots" />}
-                          </div>
-                        )}
+            <div 
+              className={forceCollapse ? 'truncated-content' : ''}
+              style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: forceCollapse ? 3 : 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', height: 'calc(1.5em * 2)' }}>
+              {state?.text || getStatusText(state?.status)}
+              {isStreaming && !state?.text && <span className="streaming-dots" />}
+            </div>
+          )}
                         {/* Expanded Full */}
                         {isExpanded && (
-                          <div data-provider-chat style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0', whiteSpace: 'pre-wrap', maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
-                            {state?.text || getStatusText(state?.status)}
+                          <div data-provider-chat style={{ maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
+                            <CodeBlockWrapper style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
+                              {String(state?.text || getStatusText(state?.status) || '')}
+                            </CodeBlockWrapper>
                             {isStreaming && <span className="streaming-dots" />}
                           </div>
                         )}
@@ -368,8 +377,10 @@ const ProviderResponseBlock = ({
                     </div>
                   )}
                   {isExpanded && (
-                    <div data-provider-chat style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0', whiteSpace: 'pre-wrap', maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
-                      {state?.text || getStatusText(state?.status)}
+                    <div data-provider-chat style={{ maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
+                      <CodeBlockWrapper style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
+                        {String(state?.text || getStatusText(state?.status) || '')}
+                      </CodeBlockWrapper>
                       {isStreaming && <span className="streaming-dots" />}
                     </div>
                   )}
