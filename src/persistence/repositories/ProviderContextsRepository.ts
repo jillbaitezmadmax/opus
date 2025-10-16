@@ -1,7 +1,7 @@
 // Provider Contexts Repository - Manages provider context records
 
 import { BaseRepository } from '../BaseRepository';
-import { ProviderContextRecord } from './types';
+import { ProviderContextRecord } from '../types';
 
 export class ProviderContextsRepository extends BaseRepository<ProviderContextRecord> {
   constructor(db: IDBDatabase) {
@@ -247,19 +247,32 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
    * Clean up old inactive contexts
    */
   async cleanupOldContexts(olderThanDays: number = 30): Promise<number> {
-    const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
-    const allContexts = await this.getAll();
-    
-    const toDelete = allContexts.filter(context => 
-      !context.isActive && context.updatedAt < cutoffDate
-    );
-
-    if (toDelete.length > 0) {
-      const ids = toDelete.map(context => context.id);
-      await this.deleteMany(ids);
+    // Defensive readiness check: ensure store exists
+    if (!this.db || !Array.from(this.db.objectStoreNames).includes(this.storeName)) {
+      console.warn(`[ProviderContextsRepository] Store ${this.storeName} not available; skipping cleanup`);
+      return 0;
     }
+    try {
+      const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
+      const allContexts = await this.getAll();
+      const toDelete = allContexts.filter(context => 
+        !context.isActive && context.updatedAt < cutoffDate
+      );
 
-    return toDelete.length;
+      if (toDelete.length > 0) {
+        const ids = toDelete.map(context => context.id);
+        await this.deleteMany(ids);
+      }
+
+      return toDelete.length;
+    } catch (error) {
+      if (error instanceof Error && (error.name === 'NotFoundError' || error.message?.includes('Missing object stores'))) {
+        console.warn('[ProviderContextsRepository] Cleanup aborted due to missing store or NotFoundError:', error);
+        return 0;
+      }
+      console.error('[ProviderContextsRepository] Cleanup failed:', error);
+      return 0;
+    }
   }
 
   /**

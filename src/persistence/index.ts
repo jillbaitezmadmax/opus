@@ -27,7 +27,7 @@ export * from './DocumentManager.js';
 export * from './SessionManager.js';
 
 // Factory functions for easy setup
-import { openDatabase } from './database.js';
+import { openDatabase, STORE_CONFIGS, SCHEMA_VERSION } from './database.js';
 import { createPersistenceAdapter } from './adapters/index.js';
 import { createRepositories } from './repositories/index.js';
 import { createProvenanceQueries } from './queries/index.js';
@@ -56,9 +56,37 @@ export async function initializePersistenceLayer(
   // Open database
   const db = await openDatabase();
   
+  // Verify schema stores exist
+  const storeNames = Array.from(db.objectStoreNames);
+  const expectedStores = STORE_CONFIGS.map(cfg => cfg.name);
+  const missingStores = expectedStores.filter(name => !storeNames.includes(name));
+  if (missingStores.length > 0) {
+    db.close();
+    throw new Error(`SchemaError: Missing object stores: ${missingStores.join(', ')}`);
+  }
+  
+  // Verify schema version metadata
+  try {
+    const tx = db.transaction('metadata', 'readonly');
+    const store = tx.objectStore('metadata');
+    const versionReq = store.get('schema_version');
+    const version: number = await new Promise((resolve, reject) => {
+      versionReq.onsuccess = () => resolve((versionReq.result && versionReq.result.value) || 0);
+      versionReq.onerror = () => reject(versionReq.error);
+    });
+    if (version !== SCHEMA_VERSION) {
+      db.close();
+      throw new Error(`SchemaError: schema_version mismatch (current=${version}, expected=${SCHEMA_VERSION})`);
+    }
+  } catch (e) {
+    db.close();
+    throw new Error(`SchemaError: unable to read metadata schema_version: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
   // Create adapter
   const adapter = createPersistenceAdapter('indexeddb');
-  await adapter.initialize();
+  // Disable adapter's internal auto-cleanup; we manage cleanup centrally in sw-entry.js
+  await adapter.initialize({ autoCleanup: false });
   
   // Create repositories
   const repositories = createRepositories(db);

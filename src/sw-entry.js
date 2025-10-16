@@ -82,6 +82,8 @@ async function initializePersistence() {
       enableMigration: true,
       enableProvenance: globalThis.HTOS_ENABLE_PROVENANCE_TRACKING || false
     });
+    // Expose globally for UI bridge and debugging
+    self.__HTOS_PERSISTENCE_LAYER = persistenceLayer;
     
     persistenceMonitor.recordConnection('HTOSPersistenceDB', 1, [
       'sessions', 'threads', 'turns', 'provider_responses', 
@@ -99,8 +101,8 @@ async function initializePersistence() {
       context: { useAdapter: HTOS_USE_PERSISTENCE_ADAPTER }
     });
     console.error('[SW] ❌ Failed to initialize persistence layer:', handledError);
-    console.warn('[SW] Falling back to legacy chrome.storage');
-    return null;
+    // Do NOT fallback silently; propagate error to fail initialization
+    throw handledError;
   }
 }
 
@@ -111,45 +113,42 @@ async function initializeSessionManager(persistenceLayer) {
   if (sessionManager) return sessionManager;
   
   try {
-    // ✅ CHANGED: Initialize SessionManager and pass adapter to initialize()
+    console.log('[SW:INIT:5] Initializing session manager...');
     sessionManager = new SessionManager();
-    
-    // Ensure backward compatibility with global sessions object
     sessionManager.sessions = __HTOS_SESSIONS;
     
-    await sessionManager.initialize(persistenceLayer ? persistenceLayer.adapter : null);
-    
-    // Migrate legacy sessions if persistence is enabled
-    if (HTOS_USE_PERSISTENCE_ADAPTER && sessionManager.migrateLegacySessions) {
-      await sessionManager.migrateLegacySessions();
+    if (HTOS_USE_PERSISTENCE_ADAPTER) {
+      // Import and create SimpleIndexedDBAdapter for SessionManager
+      const { SimpleIndexedDBAdapter } = await import('./persistence/SimpleIndexedDBAdapter.js');
+      const simpleAdapter = new SimpleIndexedDBAdapter();
+      
+      console.log('[SW] Initializing SimpleIndexedDBAdapter for SessionManager...');
+      await simpleAdapter.init();
+      
+      await sessionManager.initialize({
+        adapter: simpleAdapter,
+        usePersistenceAdapter: true
+      });
+      
+      console.log('[SW:INIT:6] ✅ Session manager initialized with persistence');
+    } else {
+      // Legacy mode without persistence
+      await sessionManager.initialize({
+        adapter: null,
+        usePersistenceAdapter: false
+      });
+      
+      console.log('[SW:INIT:6] ✅ Session manager initialized (legacy mode)');
     }
     
-    console.log('[SW] ✅ Session manager initialized');
     return sessionManager;
   } catch (error) {
     console.error('[SW] ❌ Failed to initialize session manager:', error);
-    // Fallback to basic session manager
-    sessionManager = { 
-      sessions: __HTOS_SESSIONS,
-      getOrCreateSession: (sid) => {
-        if (!__HTOS_SESSIONS[sid]) {
-          __HTOS_SESSIONS[sid] = {
-            sessionId: sid,
-            providers: {},
-            turns: [],
-            threads: { 'default-thread': { id: 'default-thread', isActive: true } },
-            createdAt: Date.now(),
-            lastActivity: Date.now()
-          };
-        }
-        return __HTOS_SESSIONS[sid];
-      },
-      saveSession: () => Promise.resolve(),
-      addTurn: () => Promise.resolve()
-    };
-    return sessionManager;
+    throw error;
   }
 }
+
+
 
 // ============================================================================
 // PERSISTENT OFFSCREEN DOCUMENT CONTROLLER
@@ -382,13 +381,16 @@ async function initializeGlobalServices() {
     console.log("[SW] 🚀 Initializing global services...");
     
     // 1. Initialize persistence layer FIRST
-    let persistenceLayer = null;
+    let pl = null;
     if (HTOS_USE_PERSISTENCE_ADAPTER) {
-      persistenceLayer = await initializePersistence();
+      pl = await initializePersistence();
     }
+    // Expose persistence layer globally for runtime checks
+    persistenceLayer = pl;
+    self.__HTOS_PERSISTENCE_LAYER = pl;
     
     // 2. Initialize session manager (depends on persistence)
-    const sessionManager = await initializeSessionManager(persistenceLayer);
+    const sessionManager = await initializeSessionManager(pl);
     
     // 3. Initialize infrastructure
     await initializeGlobalInfrastructure();
@@ -407,7 +409,7 @@ async function initializeGlobalServices() {
       orchestrator: self.faultTolerantOrchestrator,
       sessionManager: sessionManager,
       compiler,
-      persistenceLayer, // Expose persistence layer to other modules
+      persistenceLayer: pl, // Expose persistence layer to other modules
     };
   })();
 
@@ -420,7 +422,11 @@ async function initializeGlobalServices() {
 // ============================================================================
 async function handleUnifiedMessage(message, sender, sendResponse) {
   try {
-    const sm = await initializeSessionManager();
+    const sm = sessionManager || await initializeSessionManager();
+    if (!sm) {
+      sendResponse({ success: false, error: 'Service not ready' });
+      return true;
+    }
     
     switch (message.type) {
       // ========================================================================
@@ -462,18 +468,21 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       }
       
       case 'GET_SYSTEM_STATUS': {
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
         sendResponse({ 
           success: true, 
           data: { 
             availableProviders: providerRegistry.listProviders(),
             persistenceEnabled: HTOS_USE_PERSISTENCE_ADAPTER,
             documentsEnabled: HTOS_ENABLE_DOCUMENT_PERSISTENCE,
-            sessionManagerType: sm.constructor.name,
-            persistenceLayerAvailable: !!persistenceLayer
+            sessionManagerType: sm?.constructor?.name || 'unknown',
+            persistenceLayerAvailable: !!layer
           }
         });
         return true;
       }
+      
+      // GET_HEALTH_STATUS is handled in the message listener for immediate response
       
       // ========================================================================
       // PERSISTENCE OPERATIONS (Enhanced functionality)
@@ -538,12 +547,13 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       }
         
       case 'GET_PERSISTENCE_STATUS': {
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
         const status = {
           persistenceEnabled: HTOS_USE_PERSISTENCE_ADAPTER,
           documentPersistenceEnabled: HTOS_ENABLE_DOCUMENT_PERSISTENCE,
-          sessionManagerType: sm.constructor.name,
-          persistenceLayerAvailable: !!persistenceLayer,
-          adapterStatus: sm.getPersistenceStatus ? sm.getPersistenceStatus() : null
+          sessionManagerType: sm?.constructor?.name || 'unknown',
+          persistenceLayerAvailable: !!layer,
+          adapterStatus: sm?.getPersistenceStatus ? sm.getPersistenceStatus() : null
         };
         sendResponse({ success: true, status });
         return true;
@@ -614,6 +624,36 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
         }
         return true;
       }
+      
+      case 'DELETE_DOCUMENT': {
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
+          await persistenceLayer.documentManager.deleteDocument(message.documentId);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: 'Document persistence not enabled' });
+        }
+        return true;
+      }
+
+      case 'LIST_DOCUMENTS': {
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
+          try {
+            // Prefer adapter listing for summaries
+            const docs = await persistenceLayer.adapter.listDocuments();
+            const summaries = (docs || []).map(d => ({ 
+              id: d.id, 
+              title: d.title, 
+              lastModified: d.lastModified ?? d.updatedAt ?? d.createdAt 
+            }));
+            sendResponse({ success: true, documents: summaries });
+          } catch (e) {
+            sendResponse({ success: false, error: e?.message || String(e) });
+          }
+        } else {
+          sendResponse({ success: false, error: 'Document persistence not enabled' });
+        }
+        return true;
+      }
         
       default:
         // Unknown message type - don't handle it
@@ -632,11 +672,22 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Ignore bus messages
   if (request?.$bus) return false;
-  
-  // Handle all messages through unified handler
+
+  // Immediate health status response (no async init await)
+  if (request?.type === 'GET_HEALTH_STATUS') {
+    try {
+      const status = getHealthStatus();
+      sendResponse({ success: true, status });
+    } catch (e) {
+      sendResponse({ success: false, error: e?.message || String(e) });
+    }
+    return true; // Explicitly keep channel open for async-style patterns
+  }
+
+  // Handle all other messages through unified handler
   if (request?.type) {
-    const result = handleUnifiedMessage(request, sender, sendResponse);
-    return result; // Keep channel open for async responses
+    handleUnifiedMessage(request, sender, sendResponse);
+    return true; // Always return true to keep channel open for async responses
   }
   
   return false;
@@ -697,22 +748,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 // ============================================================================
-// PERIODIC MAINTENANCE
+// PERIODIC MAINTENANCE (started post-init)
 // ============================================================================
-setInterval(async () => {
-  try {
-    if (persistenceLayer?.repositories) {
-      console.log('[SW] Running periodic data cleanup...');
-      const repos = persistenceLayer.repositories;
-      const sessionsCleaned = await repos.sessions.cleanupOldSessions(30);
-      const contextsCleaned = await repos.providerContexts.cleanupOldContexts(30);
-      // Add other repository cleanups as needed
-      console.log(`[SW] Cleanup complete. Removed ${sessionsCleaned} old sessions and ${contextsCleaned} old contexts.`);
-    }
-  } catch (error) {
-    console.error('[SW] Cleanup error:', error);
-  }
-}, 60000 * 30);// 30 minutes
+let __cleanupTimer = null;
 
 // ============================================================================
 // LIFECYCLE HANDLERS
@@ -732,19 +770,28 @@ chrome.runtime.onSuspendCanceled.addListener(() => {
 // ============================================================================
 // HEALTH CHECK & DEBUGGING
 // ============================================================================
-async function getHealthStatus() {
-  const sm = await initializeSessionManager();
+function getHealthStatus() {
+  const sm = sessionManager;
+  const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+  let providers = [];
+  try { providers = providerRegistry.listProviders(); } catch (_) {}
   
   return {
     timestamp: Date.now(),
     serviceWorker: 'active',
-    sessionManager: sm ? 'initialized' : 'failed',
-    persistenceLayer: persistenceLayer ? 'active' : 'disabled',
+    sessionManager: sm ? (sm.isInitialized ? 'initialized' : 'initializing') : 'missing',
+    persistenceLayer: layer ? 'active' : 'disabled',
     featureFlags: {
       persistenceAdapter: HTOS_USE_PERSISTENCE_ADAPTER,
       documentPersistence: HTOS_ENABLE_DOCUMENT_PERSISTENCE
     },
-    providers: providerRegistry.listProviders()
+    providers,
+    details: {
+      sessionManagerType: sm?.constructor?.name || 'unknown',
+      usePersistenceAdapter: sm?.usePersistenceAdapter ?? false,
+      persistenceLayerAvailable: !!layer,
+      initState: self.__HTOS_INIT_STATE || null
+    }
   };
 }
 
@@ -772,14 +819,53 @@ globalThis.__HTOS_SW = {
 // ============================================================================
 (async () => {
   try {
-    const services = await initializeGlobalServices();
+    const INIT_TIMEOUT_MS = 30000; // 30s timeout for global initialization
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('[SW:INIT] Initialization timed out after 30s')), INIT_TIMEOUT_MS);
+    });
+    const services = await Promise.race([initializeGlobalServices(), timeoutPromise]);
     SWBootstrap.init(services);
     console.log("[SW] 🚀 Bootstrap complete. System ready.");
     
     // Log health status
     const health = await getHealthStatus();
     console.log("[SW] Health Status:", health);
+
+    // Track init state
+    self.__HTOS_INIT_STATE = {
+      initializedAt: Date.now(),
+      persistenceEnabled: HTOS_USE_PERSISTENCE_ADAPTER,
+      documentPersistenceEnabled: HTOS_ENABLE_DOCUMENT_PERSISTENCE,
+      persistenceReady: !!services.persistenceLayer,
+      providers: services?.orchestrator ? providerRegistry.listProviders() : []
+    };
+
+    // Start periodic cleanup only after init
+    if (!__cleanupTimer) {
+      __cleanupTimer = setInterval(async () => {
+        try {
+          const pl = self.__HTOS_PERSISTENCE_LAYER || services.persistenceLayer;
+          if (!pl?.repositories) {
+            console.warn('[SW] Cleanup skipped - persistence layer not ready');
+            return;
+          }
+          console.log('[SW] Running periodic data cleanup...');
+          const repos = pl.repositories;
+          // Guard each cleanup with try/catch to avoid NotFoundError crash
+          let sessionsCleaned = 0;
+          let contextsCleaned = 0;
+          try { sessionsCleaned = await repos.sessions.cleanupOldSessions(30); } catch (e) { console.warn('[SW] Sessions cleanup skipped:', e?.message || e); }
+          try { contextsCleaned = await repos.providerContexts.cleanupOldContexts(30); } catch (e) { console.warn('[SW] Provider contexts cleanup skipped:', e?.message || e); }
+          console.log(`[SW] Cleanup complete. Removed ${sessionsCleaned} old sessions and ${contextsCleaned} old contexts.`);
+        } catch (error) {
+          console.error('[SW] Cleanup error:', error);
+        }
+      }, 60000 * 30); // 30 minutes
+    }
   } catch (e) {
+    if (e instanceof Error && e.message.includes('Initialization timed out')) {
+      console.error('[SW:INIT] Timeout occurred. Current init state:', self.__HTOS_INIT_STATE);
+    }
     console.error("[SW] Bootstrap failed:", e);
   }
 })();

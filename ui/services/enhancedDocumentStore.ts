@@ -4,20 +4,17 @@
 import type { DocumentRecord } from '../types';
 import { extensionBridge } from './extensionBridge';
 
-// Feature flags
-const USE_PERSISTENCE_LAYER = (globalThis as any).HTOS_USE_PERSISTENCE_ADAPTER ?? false;
-
 // Bridge-only persistence access
 async function getPersistenceLayer() {
-  if (!USE_PERSISTENCE_LAYER) return null;
-
-  // Check if extension bridge is available and document persistence is enabled
-  if (extensionBridge.isAvailable()) {
-    const isAvailable = await extensionBridge.isDocumentPersistenceAvailable();
-    return isAvailable ? extensionBridge : null;
+  // Check if extension bridge is available and document persistence is enabled at runtime
+  if (!extensionBridge.isAvailable()) return null;
+  try {
+    const status = await extensionBridge.getPersistenceStatus();
+    const enabled = !!(status && status.documentPersistenceEnabled && status.persistenceLayerAvailable);
+    return enabled ? extensionBridge : null;
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 export interface EnhancedDocumentSummary {
@@ -51,7 +48,7 @@ class EnhancedDocumentStore {
   async saveDocument(doc: DocumentRecord): Promise<void> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       return this.saveDocumentWithPersistence(doc, persistence);
     } else {
       console.warn('[EnhancedDocumentStore] Persistence not available; document not saved:', doc.id);
@@ -65,7 +62,7 @@ class EnhancedDocumentStore {
   async loadDocument(id: string): Promise<DocumentRecord | null> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       return this.loadDocumentWithPersistence(id, persistence);
     } else {
       console.warn('[EnhancedDocumentStore] Persistence not available; cannot load document:', id);
@@ -79,7 +76,7 @@ class EnhancedDocumentStore {
   async deleteDocument(id: string): Promise<void> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       return this.deleteDocumentWithPersistence(id, persistence);
     } else {
       console.warn('[EnhancedDocumentStore] Persistence not available; cannot delete document:', id);
@@ -93,7 +90,7 @@ class EnhancedDocumentStore {
   async listDocuments(): Promise<EnhancedDocumentSummary[]> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       return this.listDocumentsWithPersistence(persistence);
     } else {
       console.warn('[EnhancedDocumentStore] Persistence not available; returning empty document list');
@@ -111,7 +108,7 @@ class EnhancedDocumentStore {
   ): Promise<DocumentRecord> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       const doc: DocumentRecord = {
         id: this.generateId(),
         title,
@@ -173,7 +170,7 @@ class EnhancedDocumentStore {
   ): Promise<any> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       return persistence.createGhost(documentId, text, provenance);
     } else {
       // Legacy ghost creation (store in document)
@@ -208,7 +205,7 @@ class EnhancedDocumentStore {
   async getDocumentGhosts(documentId: string): Promise<any[]> {
     const persistence = await getPersistenceLayer();
     
-    if (persistence && USE_PERSISTENCE_LAYER) {
+    if (persistence) {
       // Bridge does not yet expose this; return empty list for now
       try {
         // If bridge adds support, call persistence.getDocumentGhosts(documentId)
@@ -228,9 +225,7 @@ class EnhancedDocumentStore {
    * Enable auto-save for a document
    */
   enableAutoSave(documentId: string, getDocument: () => DocumentRecord): void {
-    if (USE_PERSISTENCE_LAYER) {
-      throw new Error('Ghost creation via persistence layer not yet implemented');
-    }
+    throw new Error('Ghost creation via persistence layer not yet implemented');
     // Legacy auto-save would be handled by the component
   }
 
@@ -238,9 +233,7 @@ class EnhancedDocumentStore {
    * Disable auto-save for a document
    */
   disableAutoSave(documentId: string): void {
-    if (USE_PERSISTENCE_LAYER) {
-      throw new Error('Ghost deletion via persistence layer not yet implemented');
-    }
+    throw new Error('Ghost deletion via persistence layer not yet implemented');
   }
 
   /**
@@ -255,18 +248,23 @@ class EnhancedDocumentStore {
    * Check if storage is available
    */
   isAvailable(): boolean {
-    return USE_PERSISTENCE_LAYER && extensionBridge.isAvailable();
+    return extensionBridge.isAvailable();
   }
 
   /**
    * Get storage information
    */
   async getStorageInfo(): Promise<{ bytesInUse: number; quota: number; usingPersistenceLayer: boolean }> {
-    // Storage info not available via bridge; return stub info
+    // Storage info not available via bridge; return stub info based on runtime status
+    let usingPersistenceLayer = false;
+    try {
+      const status = await extensionBridge.getPersistenceStatus();
+      usingPersistenceLayer = !!(status && status.documentPersistenceEnabled && status.persistenceLayerAvailable);
+    } catch {}
     return {
       bytesInUse: 0,
       quota: 0,
-      usingPersistenceLayer: USE_PERSISTENCE_LAYER
+      usingPersistenceLayer
     };
   }
 

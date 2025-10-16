@@ -2,6 +2,7 @@
 // Provides init(), get(), put(), delete(), getAll() methods with auto-population of key fields
 
 import { openDatabase } from './database';
+import { verifySchemaAndRepair } from './schemaVerification';
 import { withTransaction } from './transactions';
 
 export interface SimpleRecord {
@@ -17,16 +18,21 @@ export interface SimpleRecord {
 export class SimpleIndexedDBAdapter {
   private db: IDBDatabase | null = null;
   private isInitialized = false;
+  private initTimeoutMs = 8000;
 
   /**
    * Initialize the adapter and open the database
    * Only returns after onupgradeneeded completes and DB is fully open
    */
-  async init(): Promise<void> {
+  async init(options?: { timeoutMs?: number; autoRepair?: boolean }): Promise<void> {
     console.warn('persistence:init - Starting SimpleIndexedDBAdapter initialization');
-    
+    this.initTimeoutMs = options?.timeoutMs ?? this.initTimeoutMs;
+    const autoRepair = options?.autoRepair ?? true;
+
     try {
-      this.db = await openDatabase();
+      // Open DB with timeout protection
+      const dbPromise = openDatabase();
+      this.db = await this.withTimeout(dbPromise, this.initTimeoutMs, 'Timeout opening IndexedDB database');
       
       // Runtime assertions - verify DB is properly opened
       if (!this.db) {
@@ -34,13 +40,20 @@ export class SimpleIndexedDBAdapter {
         throw new Error('IndexedDB failed to open - database is null');
       }
       
-      // Verify required object stores exist
-      const requiredStores = ['sessions', 'threads', 'turns', 'provider_responses', 'documents', 'canvas_blocks', 'ghosts', 'provider_contexts', 'metadata'];
-      const missingStores = requiredStores.filter(storeName => !this.db!.objectStoreNames.contains(storeName));
-      
-      if (missingStores.length > 0) {
-        console.error('persistence:init - Missing required object stores:', missingStores);
-        throw new Error(`IndexedDB missing required object stores: ${missingStores.join(', ')}`);
+      // Verify/repair schema if needed
+      const { repaired, db: repairedDb } = await verifySchemaAndRepair(autoRepair);
+      if (repaired && repairedDb) {
+        // Replace db handle with repaired instance
+        this.db = repairedDb;
+      }
+      if (!repaired) {
+        // verify required object stores exist if no repair was needed
+        const requiredStores = ['sessions', 'threads', 'turns', 'provider_responses', 'documents', 'canvas_blocks', 'ghosts', 'provider_contexts', 'metadata'];
+        const missingStores = requiredStores.filter(storeName => !this.db!.objectStoreNames.contains(storeName));
+        if (missingStores.length > 0) {
+          console.error('persistence:init - Missing required object stores:', missingStores);
+          throw new Error(`IndexedDB missing required object stores: ${missingStores.join(', ')}`);
+        }
       }
       
       this.isInitialized = true;
@@ -204,5 +217,27 @@ export class SimpleIndexedDBAdapter {
       providerContexts: 'provider_contexts'
     };
     return map[name] || name;
+  }
+
+  /**
+   * Verifies the schema is healthy; if not and autoRepair=true, attempts delete-and-recreate.
+   * Returns true if a repair was performed, false if no repair was needed.
+   */
+  // verifySchemaAndRepair extracted to standalone utility in schemaVerification.ts
+
+  /**
+   * Helper to add timeout to promises to avoid hanging initialization
+   */
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    let timeoutHandle: any;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    });
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      return result as T;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 }

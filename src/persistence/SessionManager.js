@@ -4,9 +4,6 @@
 import { SimpleIndexedDBAdapter } from './SimpleIndexedDBAdapter.js';
 import * as chromeStoragePromise from './chromeStoragePromise.js';
 
-// Feature flag for persistence layer (can be controlled via environment or runtime)
-const USE_PERSISTENCE_ADAPTER = globalThis.HTOS_USE_PERSISTENCE_ADAPTER ?? false;
-
 // Global session cache (maintains backward compatibility)
 const __HTOS_SESSIONS = (self.__HTOS_SESSIONS = self.__HTOS_SESSIONS || {});
 
@@ -15,7 +12,7 @@ export class SessionManager {
     this.sessions = __HTOS_SESSIONS;
     this.storageKey = 'htos_sessions';
     this.isExtensionContext = typeof chrome !== 'undefined' && !!chrome.storage?.local;
-    this.usePersistenceAdapter = USE_PERSISTENCE_ADAPTER;
+    this.usePersistenceAdapter = false; // will be set during initialize(config)
     
     // Persistence layer components will be injected
     this.adapter = null;
@@ -26,19 +23,30 @@ export class SessionManager {
    * Initialize the session manager.
    * It now accepts the persistence adapter as an argument.
    */
-  async initialize(persistenceAdapter = null) {
+  async initialize(config = {}) {
+    const {
+      adapter = null,
+      usePersistenceAdapter = true,
+      migrateLegacy = true,
+      initTimeoutMs = 8000
+    } = config || {};
+    
+    this.usePersistenceAdapter = !!usePersistenceAdapter;
+    
     if (this.usePersistenceAdapter) {
       console.log('[SessionManager] Initializing with persistence adapter...');
       
-      if (persistenceAdapter) {
-        this.adapter = persistenceAdapter;
+      if (adapter) {
+        this.adapter = adapter;
       } else {
         // Create and initialize SimpleIndexedDBAdapter
         this.adapter = new SimpleIndexedDBAdapter();
-        await this.adapter.init();
+        await this.adapter.init({ timeoutMs: initTimeoutMs, autoRepair: true });
       }
       
-      await this.migrateExistingSessions();
+      if (migrateLegacy && this.isExtensionContext) {
+        await this.migrateExistingSessions();
+      }
       this.isInitialized = true;
       console.log('[SessionManager] Persistence layer integration successful.');
     } else {
@@ -873,8 +881,7 @@ export class SessionManager {
     return {
       usePersistenceAdapter: this.usePersistenceAdapter,
       isInitialized: this.isInitialized,
-      adapterReady: this.persistenceAdapter?.isReady() || false,
-      repositoriesAvailable: !!this.repositories
+      adapterReady: this.adapter?.isReady() || false
     };
   }
 
@@ -884,7 +891,11 @@ export class SessionManager {
   async enablePersistenceAdapter() {
     if (!this.usePersistenceAdapter) {
       this.usePersistenceAdapter = true;
-      await this.initializePersistenceLayer();
+      if (!this.adapter) {
+        this.adapter = new SimpleIndexedDBAdapter();
+        await this.adapter.init({ timeoutMs: 8000, autoRepair: true });
+      }
+      this.isInitialized = true;
     }
   }
 
@@ -894,10 +905,9 @@ export class SessionManager {
   async disablePersistenceAdapter() {
     if (this.usePersistenceAdapter) {
       this.usePersistenceAdapter = false;
-      if (this.persistenceAdapter) {
-        await this.persistenceAdapter.close();
-        this.persistenceAdapter = null;
-        this.repositories = null;
+      if (this.adapter) {
+        await this.adapter.close();
+        this.adapter = null;
         this.isInitialized = false;
       }
       // Reload sessions from chrome.storage

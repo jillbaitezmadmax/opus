@@ -1,7 +1,7 @@
 // Sessions Repository - Manages session records
 
 import { BaseRepository } from '../BaseRepository';
-import { SessionRecord } from './types';
+import { SessionRecord } from '../types';
 
 export class SessionsRepository extends BaseRepository<SessionRecord> {
   constructor(db: IDBDatabase) {
@@ -105,18 +105,31 @@ export class SessionsRepository extends BaseRepository<SessionRecord> {
    * Clean up old inactive sessions
    */
   async cleanupOldSessions(olderThanDays: number = 30): Promise<number> {
-    const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
-    const allSessions = await this.getAll();
-    
-    const toDelete = allSessions.filter(session => 
-      !session.isActive && session.updatedAt < cutoffDate
-    );
-
-    if (toDelete.length > 0) {
-      const ids = toDelete.map(session => session.id);
-      await this.deleteMany(ids);
+    // Defensive readiness check: ensure store exists
+    if (!this.db || !Array.from(this.db.objectStoreNames).includes(this.storeName)) {
+      console.warn(`[SessionsRepository] Store ${this.storeName} not available; skipping cleanup`);
+      return 0;
     }
+    try {
+      const cutoffDate = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
+      const allSessions = await this.getAll();
+      const toDelete = allSessions.filter(session => 
+        !session.isActive && session.updatedAt < cutoffDate
+      );
 
-    return toDelete.length;
+      if (toDelete.length > 0) {
+        const ids = toDelete.map(session => session.id);
+        await this.deleteMany(ids);
+      }
+
+      return toDelete.length;
+    } catch (error) {
+      if (error instanceof Error && (error.name === 'NotFoundError' || error.message?.includes('Missing object stores'))) {
+        console.warn('[SessionsRepository] Cleanup aborted due to missing store or NotFoundError:', error);
+        return 0;
+      }
+      console.error('[SessionsRepository] Cleanup failed:', error);
+      return 0;
+    }
   }
 }

@@ -59,7 +59,22 @@ function executeTransaction<T>(
   work: (tx: IDBTransaction) => Promise<T>
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeNames, mode);
+    let transaction: IDBTransaction;
+    // Attempt to create the transaction, but provide schema-aware errors if it fails
+    try {
+      transaction = db.transaction(storeNames, mode);
+    } catch (err) {
+      const error = err as DOMException;
+      const existingStores = Array.from(db.objectStoreNames);
+      const targetStores = Array.isArray(storeNames) ? storeNames : [storeNames];
+      const missing = targetStores.filter(name => !existingStores.includes(name));
+      if (missing.length > 0) {
+        const friendly = new Error(`SchemaError: Missing object stores [${missing.join(', ')}]; requested=[${targetStores.join(', ')}], existing=[${existingStores.join(', ')}]`);
+        (friendly as any).name = 'NotFoundError';
+        return reject(friendly);
+      }
+      return reject(error || new Error('Failed to create transaction'));
+    }
     let workResult: T;
     let workCompleted = false;
     let workRejected = false;
@@ -76,7 +91,17 @@ function executeTransaction<T>(
     
     transaction.onerror = () => {
       if (!workRejected) {
-        reject(transaction.error || new Error('Transaction failed with unknown error'));
+        // Enhance error with schema context if NotFoundError
+        const existingStores = Array.from(db.objectStoreNames);
+        const targetStores = Array.isArray(storeNames) ? storeNames : [storeNames];
+        const missing = targetStores.filter(name => !existingStores.includes(name));
+        const baseError = transaction.error || new Error('Transaction failed with unknown error');
+        if ((baseError as any).name === 'NotFoundError' || missing.length > 0) {
+          const friendly = new Error(`SchemaError: Missing object stores [${missing.join(', ')}]; requested=[${targetStores.join(', ')}], existing=[${existingStores.join(', ')}]`);
+          (friendly as any).name = 'NotFoundError';
+          return reject(friendly);
+        }
+        reject(baseError);
       }
     };
     

@@ -38,7 +38,6 @@ export interface PersistenceStatus {
   usePersistenceAdapter: boolean;
   isInitialized: boolean;
   adapterReady: boolean;
-  repositoriesReady: boolean;
 }
 
 export declare class SessionManager {
@@ -46,14 +45,12 @@ export declare class SessionManager {
   storageKey: string;
   isExtensionContext: boolean;
   usePersistenceAdapter: boolean;
-  persistenceAdapter: any;
-  repositories: any;
+  adapter: any;
   isInitialized: boolean;
 
   constructor();
   
-  initialize(): Promise<void>;
-  initializePersistenceLayer(): Promise<void>;
+  initialize(config?: { adapter?: any; usePersistenceAdapter?: boolean; migrateLegacy?: boolean; initTimeoutMs?: number }): Promise<void>;
   migrateExistingSessions(): Promise<void>;
   migrateLegacySession(sessionId: string, legacySession: any): Promise<void>;
   
