@@ -64,6 +64,15 @@ export class WorkflowCompiler {
           ),
         },
       });
+      try {
+        console.log('[Compiler] Batch step created', {
+          batchStepId,
+          hidden: !!isSynthesisFirst,
+          providers,
+          mode,
+          providerModes
+        });
+      } catch (_) {}
     }
 
     // STEP 2: Synthesis (one step per selected synthesis provider)
@@ -72,6 +81,13 @@ export class WorkflowCompiler {
         const synthStepId = `synthesis-${provider}-${Date.now()}`;
         // ✅ RESPECTS providerModes override for determining continuation
         const providerMode = providerModes[provider] || mode;
+
+        // If there is no batch step in this workflow and no explicit historical turn
+        // provided by the UI, automatically source from the latest completed turn
+        // so synthesis works on subsequent rounds without needing explicit UI context.
+        const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
+          ? this._getLatestUserTurnId(sessionId)
+          : null;
 
         steps.push({
           stepId: synthStepId,
@@ -91,12 +107,26 @@ export class WorkflowCompiler {
                   turnId: historicalContext.userTurnId,
                   responseType: historicalContext.sourceType || "batch",
                 }
+              : latestUserTurnId
+              ? {
+                  turnId: latestUserTurnId,
+                  responseType: "batch",
+                }
               : undefined,
             originalPrompt: userMessage,
             useThinking: !!useThinking && provider === "chatgpt",
             attemptNumber: historicalContext?.attemptNumber || 1,
           },
         });
+        try {
+          console.log('[Compiler] Synthesis step', {
+            synthStepId,
+            provider,
+            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId) ? batchStepId : undefined,
+            sourceStepIds: (historicalContext?.userTurnId ? undefined : (batchStepId ? [batchStepId] : undefined)),
+            sourceHistorical: (historicalContext?.userTurnId ? { turnId: historicalContext.userTurnId, responseType: historicalContext.sourceType || 'batch' } : (latestUserTurnId ? { turnId: latestUserTurnId, responseType: 'batch' } : undefined))
+          });
+        } catch (_) {}
       });
     }
 
@@ -106,6 +136,11 @@ export class WorkflowCompiler {
         const ensembleStepId = `ensemble-${provider}-${Date.now()}`;
         // ✅ RESPECTS providerModes override
         const providerMode = providerModes[provider] || mode;
+
+        // Same auto-historical sourcing for ensemble when no batch step exists
+        const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
+          ? this._getLatestUserTurnId(sessionId)
+          : null;
 
         steps.push({
           stepId: ensembleStepId,
@@ -125,12 +160,26 @@ export class WorkflowCompiler {
                   turnId: historicalContext.userTurnId,
                   responseType: historicalContext.sourceType || "batch",
                 }
+              : latestUserTurnId
+              ? {
+                  turnId: latestUserTurnId,
+                  responseType: "batch",
+                }
               : undefined,
             originalPrompt: userMessage,
             useThinking: !!useThinking && provider === "chatgpt",
             attemptNumber: historicalContext?.attemptNumber || 1,
           },
         });
+        try {
+          console.log('[Compiler] Ensemble step', {
+            ensembleStepId,
+            provider,
+            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId) ? batchStepId : undefined,
+            sourceStepIds: (historicalContext?.userTurnId ? undefined : (batchStepId ? [batchStepId] : undefined)),
+            sourceHistorical: (historicalContext?.userTurnId ? { turnId: historicalContext.userTurnId, responseType: historicalContext.sourceType || 'batch' } : (latestUserTurnId ? { turnId: latestUserTurnId, responseType: 'batch' } : undefined))
+          });
+        } catch (_) {}
       });
     }
 
@@ -272,5 +321,20 @@ export class WorkflowCompiler {
     );
     if (invalid.length > 0)
       throw new Error(`Invalid providers: ${invalid.join(", ")}`);
+  }
+
+  // Returns the most recent user turn id in the session for default historical sourcing
+  _getLatestUserTurnId(sessionId) {
+    try {
+      const session = this.sessionManager.sessions?.[sessionId];
+      if (!session || !Array.isArray(session.turns)) return null;
+      for (let i = session.turns.length - 1; i >= 0; i--) {
+        const t = session.turns[i];
+        if (t && t.type === 'user' && t.id) return t.id;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 }

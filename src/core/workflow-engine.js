@@ -9,10 +9,25 @@ function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider) 
     .map(res => `**${(res.providerId || 'UNKNOWN').toUpperCase()}:**\n${String(res.text)}`)
     .join('\n\n');
 
-  return `Synthesize multiple AI responses to create the definitive answer to this query:
+  return `you along with other models responded to the user's query:  
 
-**Original User Query:**
+  **Original User Query:**
 ${originalPrompt}
+
+  (see your last output) your task is to create the best possible response to the user's original prompt (the prompt before this) leveraging all available outputs, resources and insights.
+Process:
+1. Silently review all batch outputs below, including any response you may have contributed to this batch
+2. Extract the strongest ideas, insights, solutions, and approaches from across all responses
+3. Create a comprehensive, enhanced answer that represents the best collective intelligence available
+
+Output Requirements:
+- Respond directly to the user's original question with the synthesized answer
+- Integrate the most valuable elements from all sources seamlessly
+- Present as a unified, coherent response rather than comparative analysis
+- Aim for higher quality and completeness than any individual response
+- Do not analyze or compare the source outputs in your response
+
+
 
 You responded to this query. Your previous response (visible above) must be included in your synthesis alongside the outputs below.
 
@@ -462,6 +477,15 @@ export class WorkflowEngine {
    * Resolve source data - FIXED to handle new format
    */
   async resolveSourceData(payload, context, previousResults) {
+    try {
+      const prevKeys = Array.from(previousResults.keys());
+      console.log('[WorkflowEngine] resolveSourceData start', {
+        sourceStepIds: payload.sourceStepIds,
+        sourceHistorical: payload.sourceHistorical,
+        previousResultsKeys: prevKeys
+      });
+    } catch (_) {}
+
     if (payload.sourceHistorical) {
       // Historical source
       const { turnId: userTurnId, responseType } = payload.sourceHistorical;
@@ -517,6 +541,11 @@ export class WorkflowEngine {
         }
 
         const { results } = stepResult.result;
+        try {
+          console.log('[WorkflowEngine] Using batch results from step', stepId, {
+            providers: Object.keys(results || {})
+          });
+        } catch (_) {}
         
         // Results is now an object: { claude: {...}, gemini: {...} }
         Object.entries(results).forEach(([providerId, result]) => {
@@ -556,16 +585,27 @@ export class WorkflowEngine {
       payload.synthesisProvider
     );
 
-    // Build providerContexts from workflowContexts (preferred) or fallback to
-    // continueFromBatchStep for backwards compatibility.
+    // Build providerContexts preferring persisted context, then workflow cache,
+    // then fallback to continueFromBatchStep for backwards compatibility.
     const providerContexts = {};
-    if (workflowContexts && workflowContexts[payload.synthesisProvider]) {
+    try {
+      const persisted = this.sessionManager.getProviderContexts(context.sessionId, context.threadId || 'default-thread');
+      const persistedMeta = persisted?.[payload.synthesisProvider]?.meta;
+      if (persistedMeta && Object.keys(persistedMeta).length > 0) {
+        providerContexts[payload.synthesisProvider] = {
+          meta: persistedMeta,
+          continueThread: true
+        };
+        console.log(`[WorkflowEngine] Synthesis using persisted context for ${payload.synthesisProvider}: ${Object.keys(persistedMeta).join(',')}`);
+      }
+    } catch (_) {}
+    if (!providerContexts[payload.synthesisProvider] && workflowContexts && workflowContexts[payload.synthesisProvider]) {
       providerContexts[payload.synthesisProvider] = {
         meta: workflowContexts[payload.synthesisProvider],
         continueThread: true
       };
       console.log(`[WorkflowEngine] Synthesis using workflow-cached context for ${payload.synthesisProvider}: ${Object.keys(workflowContexts[payload.synthesisProvider]).join(',')}`);
-    } else if (payload.continueFromBatchStep) {
+    } else if (!providerContexts[payload.synthesisProvider] && payload.continueFromBatchStep) {
       const batchResult = previousResults.get(payload.continueFromBatchStep);
       if (batchResult?.status === 'completed' && batchResult.result?.results) {
         const synthProviderResult = batchResult.result.results[payload.synthesisProvider];
@@ -629,6 +669,13 @@ export class WorkflowEngine {
             { skipSave: true }
           );
           this.sessionManager.saveSession(context.sessionId);
+          // Update workflow-cached context for subsequent steps in the same workflow
+          try {
+            if (finalResult?.meta) {
+              workflowContexts[payload.synthesisProvider] = finalResult.meta;
+              console.log(`[WorkflowEngine] Updated workflow context for ${payload.synthesisProvider}: ${Object.keys(finalResult.meta).join(',')}`);
+            }
+          } catch (_) {}
           
           resolve({
             providerId: payload.synthesisProvider,
@@ -657,16 +704,27 @@ export class WorkflowEngine {
 
     const ensemblePrompt = buildEnsemblerPrompt(payload.originalPrompt, sourceData);
 
-    // Build providerContexts from workflowContexts (preferred) or fallback to
-    // continueFromBatchStep for backwards compatibility.
+    // Build providerContexts preferring persisted context, then workflow cache,
+    // then fallback to continueFromBatchStep for backwards compatibility.
     const providerContexts = {};
-    if (workflowContexts && workflowContexts[payload.ensembleProvider]) {
+    try {
+      const persisted = this.sessionManager.getProviderContexts(context.sessionId, context.threadId || 'default-thread');
+      const persistedMeta = persisted?.[payload.ensembleProvider]?.meta;
+      if (persistedMeta && Object.keys(persistedMeta).length > 0) {
+        providerContexts[payload.ensembleProvider] = {
+          meta: persistedMeta,
+          continueThread: true
+        };
+        console.log(`[WorkflowEngine] Ensemble using persisted context for ${payload.ensembleProvider}: ${Object.keys(persistedMeta).join(',')}`);
+      }
+    } catch (_) {}
+    if (!providerContexts[payload.ensembleProvider] && workflowContexts && workflowContexts[payload.ensembleProvider]) {
       providerContexts[payload.ensembleProvider] = {
         meta: workflowContexts[payload.ensembleProvider],
         continueThread: true
       };
       console.log(`[WorkflowEngine] Ensemble using workflow-cached context for ${payload.ensembleProvider}: ${Object.keys(workflowContexts[payload.ensembleProvider]).join(',')}`);
-    } else if (payload.continueFromBatchStep) {
+    } else if (!providerContexts[payload.ensembleProvider] && payload.continueFromBatchStep) {
       const batchResult = previousResults.get(payload.continueFromBatchStep);
       if (batchResult?.status === 'completed' && batchResult.result?.results) {
         const ensembleProviderResult = batchResult.result.results[payload.ensembleProvider];
@@ -730,6 +788,13 @@ export class WorkflowEngine {
             { skipSave: true }
           );
           this.sessionManager.saveSession(context.sessionId);
+          // Update workflow-cached context for subsequent steps in the same workflow
+          try {
+            if (finalResult?.meta) {
+              workflowContexts[payload.ensembleProvider] = finalResult.meta;
+              console.log(`[WorkflowEngine] Updated workflow context for ${payload.ensembleProvider}: ${Object.keys(finalResult.meta).join(',')}`);
+            }
+          } catch (_) {}
           
           resolve({
             providerId: payload.ensembleProvider,

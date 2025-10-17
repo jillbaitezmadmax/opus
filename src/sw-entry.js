@@ -238,6 +238,11 @@ class FaultTolerantOrchestrator {
 
         let aggregatedText = ""; // Buffer for this provider's partials
 
+        // If we have a provider-specific context, attempt a continuation.
+        // Each adapter's sendContinuation will gracefully fall back to sendPrompt
+        // when its required identifiers (e.g., conversationId/chatId/cursor) are missing.
+        const hasContext = !!providerContexts && !!providerContexts[providerId];
+
         const request = {
           originalPrompt: prompt,
           sessionId,
@@ -245,14 +250,13 @@ class FaultTolerantOrchestrator {
         };
 
         try {
+          // Favor "send prompt with context" as the single path for both new and continued chats.
+          // When context exists, it's already merged into request.meta above.
           const result = await adapter.sendPrompt(
             request,
             (chunk) => {
-              // The original onPartial in the engine expects a chunk object, not just a string
               const textChunk = typeof chunk === 'string' ? chunk : chunk.text;
-              if (textChunk) {
-                aggregatedText += textChunk;
-              }
+              if (textChunk) aggregatedText += textChunk;
               onPartial(providerId, typeof chunk === 'string' ? { text: chunk } : chunk);
             },
             abortController.signal
@@ -433,42 +437,107 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       // HISTORY OPERATIONS (Legacy compatibility)
       // ========================================================================
       case 'GET_FULL_HISTORY': {
-        const sessions = Object.values(sm.sessions || {})
-          .map(s => ({
-            id: s.sessionId,
-            sessionId: s.sessionId,
-            title: s.title || s.turns?.[0]?.text?.slice(0, 50) || 'New Chat',
-            startTime: s.createdAt,
-            lastActivity: s.lastActivity,
-            messageCount: (s.turns?.length || 0),
-            firstMessage: s.turns?.[0]?.text || ''
-          }))
-          .sort((a, b) => b.lastActivity - a.lastActivity);
+        // Prefer persistence layer when available
+        let sessions = [];
+        try {
+          if (sm.getPersistenceStatus?.().usePersistenceAdapter && sm.adapter?.isReady()) {
+            const allSessions = await sm.adapter.getAll('sessions');
+            sessions = allSessions.map(r => ({
+              id: r.id,
+              sessionId: r.id,
+              title: r.title || 'New Chat',
+              startTime: r.createdAt,
+              lastActivity: r.updatedAt || r.lastActivity,
+              messageCount: r.turnCount || 0,
+              firstMessage: ''
+            })).sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+          } else {
+            sessions = Object.values(sm.sessions || {})
+              .map(s => ({
+                id: s.sessionId,
+                sessionId: s.sessionId,
+                title: s.title || s.turns?.[0]?.text?.slice(0, 50) || 'New Chat',
+                startTime: s.createdAt,
+                lastActivity: s.lastActivity,
+                messageCount: (s.turns?.length || 0),
+                firstMessage: s.turns?.[0]?.text || ''
+              }))
+              .sort((a, b) => b.lastActivity - a.lastActivity);
+          }
+        } catch (e) {
+          console.error('[SW] Failed to build full history from persistence:', e);
+          sessions = [];
+        }
         sendResponse({ success: true, data: { sessions } });
         return true;
       }
       
       case 'GET_HISTORY_SESSION': {
-        const session = sm.sessions[message.sessionId];
-        if (session) {
-          const transformed = {
-            id: session.sessionId,
-            sessionId: session.sessionId,
-            title: session.title,
-            createdAt: session.createdAt,
-            lastActivity: session.lastActivity,
-            turns: session.turns || [],
-            providerContexts: session.providers || {}
-          };
-          sendResponse({ success: true, data: transformed });
-        } else {
-          sendResponse({ success: false, error: 'Session not found' });
+        try {
+          const sessionId = message.sessionId || message.payload?.sessionId;
+          if (!sessionId) {
+            console.error('[SW] GET_HISTORY_SESSION missing sessionId in message:', message);
+            sendResponse({ success: false, error: 'Missing sessionId' });
+            return true;
+          }
+
+          let session = sm.sessions?.[sessionId];
+          if (!session && sm.getPersistenceStatus?.().usePersistenceAdapter && sm.adapter?.isReady()) {
+            // Hydrate from persistence
+            session = await sm.buildLegacySessionObject(sessionId);
+            if (session) {
+              sm.sessions[sessionId] = session;
+            }
+          }
+
+          if (session) {
+            // Build "rounds" the UI expects: { createdAt, userTurnId, aiTurnId, user: {id?, text, createdAt}, providers: {...}, completedAt }
+            const turns = Array.isArray(session.turns) ? session.turns : [];
+            const rounds = [];
+            for (let i = 0; i < turns.length; i++) {
+              const t = turns[i];
+              if (t && t.type === 'user') {
+                const u = t;
+                const ai = turns[i + 1] && turns[i + 1].type === 'ai' ? turns[i + 1] : null;
+                const providers = (ai && (ai.batchResponses || ai.providerResponses)) ? (ai.batchResponses || ai.providerResponses) : {};
+                rounds.push({
+                  createdAt: Number(u.createdAt || Date.now()),
+                  userTurnId: String(u.id || ''),
+                  aiTurnId: String((ai && ai.id) || ''),
+                  user: {
+                    id: String(u.id || ''),
+                    text: String(u.text || ''),
+                    createdAt: Number(u.createdAt || Date.now())
+                  },
+                  providers,
+                  completedAt: Number((ai && ai.createdAt) || (u.createdAt ? (Number(u.createdAt) + 1) : Date.now()))
+                });
+              }
+            }
+
+            const transformed = {
+              id: session.sessionId,
+              sessionId: session.sessionId,
+              title: session.title,
+              createdAt: session.createdAt,
+              lastActivity: session.lastActivity,
+              turns: rounds,
+              providerContexts: session.providers || {}
+            };
+            sendResponse({ success: true, data: transformed });
+          } else {
+            sendResponse({ success: false, error: 'Session not found' });
+          }
+        } catch (e) {
+          console.error('[SW] GET_HISTORY_SESSION error:', e);
+          sendResponse({ success: false, error: 'Failed to load session' });
         }
         return true;
       }
       
       case 'GET_SYSTEM_STATUS': {
         const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        const ps = sm.getPersistenceStatus?.() || {};
         sendResponse({ 
           success: true, 
           data: { 
@@ -476,7 +545,10 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
             persistenceEnabled: HTOS_USE_PERSISTENCE_ADAPTER,
             documentsEnabled: HTOS_ENABLE_DOCUMENT_PERSISTENCE,
             sessionManagerType: sm?.constructor?.name || 'unknown',
-            persistenceLayerAvailable: !!layer
+            persistenceLayerAvailable: !!layer,
+            usePersistenceAdapter: !!ps.usePersistenceAdapter,
+            adapterReady: !!ps.adapterReady,
+            activeMode: ps.usePersistenceAdapter ? 'indexeddb' : 'legacy'
           }
         });
         return true;
@@ -489,19 +561,20 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       // ========================================================================
       case 'GET_SESSION': {
         const operationId = persistenceMonitor.startOperation('GET_SESSION', {
-          sessionId: message.sessionId
+          sessionId: message.sessionId || message.payload?.sessionId
         });
 
         try {
-          const session = await sm.getOrCreateSession(message.sessionId);
+          const sessionId = message.sessionId || message.payload?.sessionId;
+          const session = await sm.getOrCreateSession(sessionId);
           persistenceMonitor.endOperation(operationId, { sessionFound: !!session });
           sendResponse({ success: true, session });
         } catch (error) {
           persistenceMonitor.endOperation(operationId, null, error);
           const handledError = await errorHandler.handleError(error, {
             operation: 'getSession',
-            sessionId: message.sessionId,
-            retry: () => sm.getOrCreateSession(message.sessionId)
+            sessionId: message.sessionId || message.payload?.sessionId,
+            retry: () => sm.getOrCreateSession(message.sessionId || message.payload?.sessionId)
           });
           sendResponse({ success: false, error: handledError.message });
         }
@@ -509,39 +582,44 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       }
         
       case 'SAVE_TURN': {
-        await sm.addTurn(message.sessionId, message.turn);
+        const sessionId = message.sessionId || message.payload?.sessionId;
+        await sm.addTurn(sessionId, message.turn);
         sendResponse({ success: true });
         return true;
       }
         
       case 'UPDATE_PROVIDER_CONTEXT': {
+        const sessionId = message.sessionId || message.payload?.sessionId;
         await sm.updateProviderContext(
-          message.sessionId,
-          message.providerId,
-          message.context
+          sessionId,
+          message.providerId || message.payload?.providerId,
+          message.context || message.payload?.context
         );
         sendResponse({ success: true });
         return true;
       }
         
       case 'CREATE_THREAD': {
+        const sessionId = message.sessionId || message.payload?.sessionId;
         const thread = await sm.createThread(
-          message.sessionId,
-          message.title,
-          message.sourceAiTurnId
+          sessionId,
+          message.title || message.payload?.title,
+          message.sourceAiTurnId || message.payload?.sourceAiTurnId
         );
         sendResponse({ success: true, thread });
         return true;
       }
         
       case 'SWITCH_THREAD': {
-        await sm.switchThread(message.sessionId, message.threadId);
+        const sessionId = message.sessionId || message.payload?.sessionId;
+        await sm.switchThread(sessionId, message.threadId || message.payload?.threadId);
         sendResponse({ success: true });
         return true;
       }
         
       case 'DELETE_SESSION': {
-        await sm.deleteSession(message.sessionId);
+        const sessionId = message.sessionId || message.payload?.sessionId;
+        await sm.deleteSession(sessionId);
         sendResponse({ success: true });
         return true;
       }
@@ -585,61 +663,82 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       // DOCUMENT OPERATIONS (When document persistence is enabled)
       // ========================================================================
       case 'SAVE_DOCUMENT': {
-        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
-          await persistenceLayer.documentManager.saveDocument(
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.documentManager) {
+          await layer.documentManager.saveDocument(
             message.documentId,
             message.document,
             message.content
           );
           sendResponse({ success: true });
         } else {
-          sendResponse({ success: false, error: 'Document persistence not enabled' });
+          const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE
+            ? 'HTOS_ENABLE_DOCUMENT_PERSISTENCE is false'
+            : 'Persistence layer unavailable';
+          console.warn('[SW] SAVE_DOCUMENT skipped:', reason);
+          sendResponse({ success: false, error: `Document persistence not enabled: ${reason}` });
         }
         return true;
       }
         
       case 'LOAD_DOCUMENT': {
-        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
-          const document = await persistenceLayer.documentManager.loadDocument(
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.documentManager) {
+          const document = await layer.documentManager.loadDocument(
             message.documentId,
             message.reconstructContent
           );
           sendResponse({ success: true, document });
         } else {
-          sendResponse({ success: false, error: 'Document persistence not enabled' });
+          const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE
+            ? 'HTOS_ENABLE_DOCUMENT_PERSISTENCE is false'
+            : 'Persistence layer unavailable';
+          console.warn('[SW] LOAD_DOCUMENT skipped:', reason);
+          sendResponse({ success: false, error: `Document persistence not enabled: ${reason}` });
         }
         return true;
       }
         
       case 'CREATE_GHOST': {
-        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
-          const ghost = await persistenceLayer.documentManager.createGhost(
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.documentManager) {
+          const ghost = await layer.documentManager.createGhost(
             message.documentId,
             message.text,
             message.provenance
           );
           sendResponse({ success: true, ghost });
         } else {
-          sendResponse({ success: false, error: 'Document persistence not enabled' });
+          const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE
+            ? 'HTOS_ENABLE_DOCUMENT_PERSISTENCE is false'
+            : 'Persistence layer unavailable';
+          console.warn('[SW] CREATE_GHOST skipped:', reason);
+          sendResponse({ success: false, error: `Document persistence not enabled: ${reason}` });
         }
         return true;
       }
       
       case 'DELETE_DOCUMENT': {
-        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
-          await persistenceLayer.documentManager.deleteDocument(message.documentId);
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.documentManager) {
+          await layer.documentManager.deleteDocument(message.documentId);
           sendResponse({ success: true });
         } else {
-          sendResponse({ success: false, error: 'Document persistence not enabled' });
+          const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE
+            ? 'HTOS_ENABLE_DOCUMENT_PERSISTENCE is false'
+            : 'Persistence layer unavailable';
+          console.warn('[SW] DELETE_DOCUMENT skipped:', reason);
+          sendResponse({ success: false, error: `Document persistence not enabled: ${reason}` });
         }
         return true;
       }
 
       case 'LIST_DOCUMENTS': {
-        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && persistenceLayer) {
+        const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+        if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.adapter) {
           try {
             // Prefer adapter listing for summaries
-            const docs = await persistenceLayer.adapter.listDocuments();
+            const docs = await layer.adapter.listDocuments();
             const summaries = (docs || []).map(d => ({ 
               id: d.id, 
               title: d.title, 
@@ -647,10 +746,15 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
             }));
             sendResponse({ success: true, documents: summaries });
           } catch (e) {
+            console.error('[SW] LIST_DOCUMENTS error:', e);
             sendResponse({ success: false, error: e?.message || String(e) });
           }
         } else {
-          sendResponse({ success: false, error: 'Document persistence not enabled' });
+          const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE
+            ? 'HTOS_ENABLE_DOCUMENT_PERSISTENCE is false'
+            : 'Persistence layer unavailable';
+          console.warn('[SW] LIST_DOCUMENTS skipped:', reason);
+          sendResponse({ success: false, error: `Document persistence not enabled: ${reason}` });
         }
         return true;
       }

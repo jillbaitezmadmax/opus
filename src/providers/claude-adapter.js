@@ -114,8 +114,9 @@ export class ClaudeAdapter {
             if (!chatId) {
                 console.warn('[ClaudeAdapter] No chatId found in provider context, falling back to new chat');
                 // Fall back to regular sendPrompt if no context available
+                const meta = providerContext?.meta || providerContext || {};
                 return await this.sendPrompt(
-                    { originalPrompt: prompt, sessionId, meta: providerContext },
+                    { originalPrompt: prompt, sessionId, meta },
                     onChunk,
                     signal
                 );

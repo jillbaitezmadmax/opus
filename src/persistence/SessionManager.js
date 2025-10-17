@@ -540,6 +540,17 @@ export class SessionManager {
       for (const turn of turns) {
         await this.adapter.delete('turns', turn.id);
       }
+
+      // Also delete provider responses associated with this session
+      try {
+        const allResponses = await this.adapter.getAll('provider_responses');
+        const responses = allResponses.filter(resp => resp.sessionId === sessionId);
+        for (const resp of responses) {
+          await this.adapter.delete('provider_responses', resp.id);
+        }
+      } catch (e) {
+        console.warn('[SessionManager] Failed to delete provider responses for session', sessionId, e);
+      }
       
       const allContexts = await this.adapter.getAll('provider_contexts');
       const contexts = allContexts.filter(context => context.sessionId === sessionId);
@@ -859,7 +870,13 @@ export class SessionManager {
   /**
    * Save turn (legacy compatibility method)
    */
-  saveTurn(sessionId, userTurn, aiTurn) {
+  async saveTurn(sessionId, userTurn, aiTurn) {
+    // If persistence adapter is active, persist full turn + provider responses
+    if (this.usePersistenceAdapter && this.isInitialized && this.adapter?.isReady()) {
+      return this.saveTurnWithPersistence(sessionId, userTurn, aiTurn);
+    }
+
+    // Legacy fallback
     const session = this.getOrCreateSessionLegacy(sessionId);
     session.turns = session.turns || [];
 
@@ -872,6 +889,122 @@ export class SessionManager {
     }
 
     this.saveSession(sessionId).catch(err => console.error(`Failed to save session ${sessionId}:`, err));
+  }
+
+  /**
+   * Persist a complete user+AI turn and all provider responses
+   */
+  async saveTurnWithPersistence(sessionId, userTurn, aiTurn) {
+    try {
+      // Ensure session exists and is hydrated into legacy cache
+      const session = await this.getOrCreateSession(sessionId);
+
+      // Determine next sequence
+      const allTurns = await this.adapter.getAll('turns');
+      const existingTurns = allTurns.filter(t => t.sessionId === sessionId);
+      let nextSequence = existingTurns.length;
+
+      const now = Date.now();
+
+      // Persist user turn
+      if (userTurn) {
+        const userTurnRecord = {
+          id: userTurn.id || `turn-${sessionId}-${nextSequence}`,
+          type: 'user',
+          role: 'user',
+          sessionId,
+          threadId: 'default-thread',
+          createdAt: userTurn.createdAt || now,
+          updatedAt: now,
+          content: userTurn.text || '',
+          sequence: nextSequence++
+        };
+        await this.adapter.put('turns', userTurnRecord);
+
+        // Mirror in legacy cache for UI compatibility
+        session.turns = session.turns || [];
+        session.turns.push({ ...userTurn, threadId: 'default-thread' });
+      }
+
+      // Persist AI turn
+      if (aiTurn) {
+        const aiTurnId = aiTurn.id || `turn-${sessionId}-${nextSequence}`;
+        const providerResponseIds = [];
+
+        // Flatten and persist provider responses across types
+        const persistResponses = async (bucket, responseType) => {
+          if (!bucket) return;
+          const providers = Object.keys(bucket);
+          for (const providerId of providers) {
+            const entries = Array.isArray(bucket[providerId]) ? bucket[providerId] : [bucket[providerId]];
+            for (let idx = 0; idx < entries.length; idx++) {
+              const entry = entries[idx] || {};
+              const respId = `pr-${sessionId}-${aiTurnId}-${providerId}-${responseType}-${idx}-${Date.now()}`;
+              const record = {
+                id: respId,
+                sessionId,
+                aiTurnId,
+                providerId,
+                responseType,
+                responseIndex: idx,
+                text: entry.text || '',
+                status: entry.status || 'completed',
+                meta: entry.meta || {},
+                createdAt: now,
+                updatedAt: now,
+                completedAt: now
+              };
+              await this.adapter.put('provider_responses', record);
+              providerResponseIds.push(respId);
+            }
+          }
+        };
+
+        await persistResponses(aiTurn.batchResponses, 'batch');
+        await persistResponses(aiTurn.synthesisResponses, 'synthesis');
+        await persistResponses(aiTurn.ensembleResponses, 'ensemble');
+
+        const aiTurnRecord = {
+          id: aiTurnId,
+          type: 'ai',
+          role: 'assistant',
+          sessionId,
+          threadId: 'default-thread',
+          createdAt: aiTurn.createdAt || now,
+          updatedAt: now,
+          content: aiTurn.text || '',
+          sequence: nextSequence,
+          userTurnId: userTurn?.id,
+          providerResponseIds,
+          batchResponseCount: (aiTurn.batchResponses && Object.values(aiTurn.batchResponses).flat().length) || 0,
+          synthesisResponseCount: (aiTurn.synthesisResponses && Object.values(aiTurn.synthesisResponses).flat().length) || 0,
+          ensembleResponseCount: (aiTurn.ensembleResponses && Object.values(aiTurn.ensembleResponses).flat().length) || 0
+        };
+        await this.adapter.put('turns', aiTurnRecord);
+
+        // Mirror in legacy cache for UI compatibility
+        session.turns = session.turns || [];
+        session.turns.push({ ...aiTurn, threadId: 'default-thread', completedAt: now });
+      }
+
+      // Title: first user turn text if missing
+      if (!session.title && userTurn?.text) {
+        session.title = String(userTurn.text).slice(0, 50);
+        const sessionRecord = await this.adapter.get('sessions', sessionId);
+        if (sessionRecord) {
+          sessionRecord.title = session.title;
+          sessionRecord.updatedAt = now;
+          await this.adapter.put('sessions', sessionRecord);
+        }
+      }
+
+      session.lastActivity = now;
+      await this.saveSession(sessionId);
+    } catch (error) {
+      console.error(`[SessionManager] Failed to save turn with persistence:`, error);
+      // Fallback to legacy path
+      this.saveTurn(sessionId, userTurn, aiTurn);
+    }
   }
 
   /**

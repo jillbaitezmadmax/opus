@@ -105,6 +105,20 @@ const api = {
     const port = await this.ensurePort({ sessionId: request.sessionId });
     
     // Send high-level request - backend will compile it
+    try {
+      const safeLog = {
+        mode: request.mode,
+        sessionId: request.sessionId,
+        threadId: request.threadId,
+        userMessagePreview: String(request.userMessage || '').substring(0, 120),
+        providers: request.providers,
+        synthesis: request.synthesis,
+        ensemble: request.ensemble,
+        useThinking: request.useThinking
+      };
+      console.log('[API] executeWorkflow payload:', safeLog);
+    } catch (_) {}
+
     port.postMessage({
       type: EXECUTE_WORKFLOW,
       payload: request

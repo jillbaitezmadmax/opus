@@ -898,41 +898,64 @@ const App = () => {
          }
 
          case 'PARTIAL_RESULT': {
-           const { stepId, providerId, chunk } = message;
+           const { stepId, providerId, chunk, sessionId: msgSessionId } = message;
            if (!providerId || !chunk?.text) return;
 
-           // Use includes() to match stepId patterns like 'ensemble-chatgpt-123'
-           let responseType: 'batch' | 'synthesis' | 'ensemble' = 'batch';
+           // Ignore messages from other sessions to prevent cross-chat attachment
+           if (msgSessionId && currentSessionId && msgSessionId !== currentSessionId) {
+             try { console.warn(`[Port Handler] Ignoring PARTIAL_RESULT from session ${msgSessionId} (active ${currentSessionId})`); } catch (e) {}
+             return;
+           }
+
+           // Determine response type based on stepId markers
+           let responseType: 'batch' | 'synthesis' | 'ensemble' | 'unknown' = 'unknown';
            if (typeof stepId === 'string') {
              if (stepId.includes('synthesis')) responseType = 'synthesis';
              else if (stepId.includes('ensemble')) responseType = 'ensemble';
+             else if (stepId.includes('batch') || stepId.includes('prompt')) responseType = 'batch';
            }
 
-           console.log('[UI] Processing PARTIAL_RESULT:', message.stepId, message.providerId, message.chunk?.text?.substring(0, 30));
+           if (responseType === 'unknown') {
+             try { console.warn(`[Port Handler] Unknown stepId routing for PARTIAL_RESULT: ${String(stepId)}`); } catch (e) {}
+             // Do not default to batch; avoid misrouting duplicates
+             return;
+           }
 
-           // Debug: show routing decisions for partial streaming
+           console.log('[UI] Processing PARTIAL_RESULT:', stepId, providerId, chunk?.text?.substring(0, 30));
            try { console.log(`[Port Handler] Routing partial for ${providerId} to ${responseType} (stepId: ${stepId})`); } catch (e) {}
 
-          streamingBufferRef.current?.addDelta(providerId, chunk.text, 'streaming', responseType);
-          
-          if (chunk.meta) {
+           streamingBufferRef.current?.addDelta(providerId, chunk.text, 'streaming', responseType);
+           
+           if (chunk.meta) {
             setProviderContexts((prev: Record<string, any>) => ({ ...prev, [providerId]: { ...(prev[providerId] || {}), ...chunk.meta } }));
-          }
-          break;
+           }
+           break;
          }
 
          case 'WORKFLOW_STEP_UPDATE': {
-           const { stepId, status, result, error } = message;
+           const { stepId, status, result, error, sessionId: msgSessionId } = message;
+           // Ignore messages from other sessions to prevent cross-chat attachment
+           if (msgSessionId && currentSessionId && msgSessionId !== currentSessionId) {
+             try { console.warn(`[Port Handler] Ignoring WORKFLOW_STEP_UPDATE from session ${msgSessionId} (active ${currentSessionId})`); } catch (e) {}
+             break;
+           }
+
            if (status === 'completed' && result) {
              // A step can complete with a single result or a map of results for each provider
              const resultsMap = result.results || (result.providerId ? { [result.providerId]: result } : {});
              
              Object.entries(resultsMap).forEach(([providerId, data]: [string, any]) => {
                  // Use includes() to match flexible stepId naming (e.g. 'ensemble-chatgpt-...')
-                 let responseType: 'batch' | 'synthesis' | 'ensemble' = 'batch';
+                 let responseType: 'batch' | 'synthesis' | 'ensemble' | 'unknown' = 'unknown';
                  if (typeof stepId === 'string') {
                    if (stepId.includes('synthesis')) responseType = 'synthesis';
                    else if (stepId.includes('ensemble')) responseType = 'ensemble';
+                   else if (stepId.includes('batch') || stepId.includes('prompt')) responseType = 'batch';
+                 }
+
+                 if (responseType === 'unknown') {
+                   try { console.warn(`[Port Handler] Unknown stepId routing for completion: ${String(stepId)} (${providerId})`); } catch (e) {}
+                   return; // Avoid misrouting to batch by default
                  }
 
                  // Debug: show completion routing for provider results
@@ -951,6 +974,12 @@ const App = () => {
          }
 
          case 'WORKFLOW_COMPLETE': {
+           const { sessionId: msgSessionId } = message;
+           // Ignore completion from other sessions
+           if (msgSessionId && currentSessionId && msgSessionId !== currentSessionId) {
+             try { console.warn(`[Port Handler] Ignoring WORKFLOW_COMPLETE from session ${msgSessionId} (active ${currentSessionId})`); } catch (e) {}
+             break;
+           }
            // Save current active AI turn id before we clear it
            const completedTurnId = activeAiTurnIdRef.current;
 
@@ -1261,6 +1290,26 @@ const App = () => {
     setMessages((prev: TurnMessage[]) => [...prev, userTurn]);
     
     try {
+        // Determine synthesis/ensemble settings for continuation, same as initial send
+        const shouldUseSynthesis = !!synthesisProvider && activeProviders.length > 1;
+        const shouldUseEnsemble = ensembleEnabled &&
+                                  !!ensembleProvider &&
+                                  activeProviders.length > 1 &&
+                                  activeProviders.includes(ensembleProvider as ProviderKey);
+
+        // Debug: log gating and provider selections for continuation
+        try {
+          console.log('[UI] Continuation config', {
+            activeProviders,
+            synthesisProvider,
+            ensembleEnabled,
+            ensembleProvider,
+            shouldUseSynthesis,
+            shouldUseEnsemble,
+            promptPreview: trimmed.substring(0, 120)
+          });
+        } catch (_) {}
+
         // Unified request for continuation
         const request: ExecuteWorkflowRequest = {
           sessionId: currentSessionId,
@@ -1268,31 +1317,71 @@ const App = () => {
           mode: 'continuation',
           userMessage: trimmed,
           providers: activeProviders,
+          synthesis: shouldUseSynthesis ? {
+            enabled: true,
+            providers: [synthesisProvider as ProviderKey]
+          } : undefined,
+        ensemble: shouldUseEnsemble ? {
+            enabled: true,
+            providers: [ensembleProvider as ProviderKey]
+          } : undefined,
           useThinking: computeThinkFlag({ modeThinkButtonOn: thinkOnChatGPT, input: trimmed })
         };
 
-        const pendingBatch: Record<string, ProviderResponse> = {};
-        activeProviders.forEach(pid => {
-            pendingBatch[pid] = { 
-              providerId: pid, 
-              text: '', 
-              status: 'pending', 
-              createdAt: Date.now() 
+        if (shouldUseSynthesis || shouldUseEnsemble) {
+          // Optimistically create unified AI turn with pending synthesis/ensemble
+          const unifiedAiTurn: AiTurn = {
+            type: 'ai',
+            id: aiTurnId,
+            createdAt: Date.now(),
+            sessionId: currentSessionId,
+            threadId: 'default-thread',
+            userTurnId: userTurn.id,
+            meta: shouldUseSynthesis ? { synthForUserTurnId: userTurn.id } : undefined,
+            batchResponses: {},
+            synthesisResponses: shouldUseSynthesis ? {
+              [synthesisProvider as string]: [{
+                providerId: synthesisProvider as ProviderKey,
+                text: '',
+                status: 'pending',
+                createdAt: Date.now()
+              }]
+            } : {},
+            ensembleResponses: shouldUseEnsemble ? {
+              [ensembleProvider as string]: [{
+                providerId: ensembleProvider as ProviderKey,
+                text: '',
+                status: 'pending',
+                createdAt: Date.now()
+              }]
+            } : {}
+          };
+          setMessages((prev: TurnMessage[]) => [...prev, unifiedAiTurn]);
+        } else {
+          // Standard batch continuation — optimistic pending batch outputs
+          const pendingBatch: Record<string, ProviderResponse> = {};
+          activeProviders.forEach(pid => {
+            pendingBatch[pid] = {
+              providerId: pid,
+              text: '',
+              status: 'pending',
+              createdAt: Date.now()
             };
-        });
-        const aiTurn: AiTurn = { 
-          type: 'ai', 
-          id: aiTurnId, 
-          createdAt: Date.now(), 
-          sessionId: currentSessionId, 
-          threadId: 'default-thread',
-          userTurnId: userTurn.id,
-          batchResponses: pendingBatch,
-          synthesisResponses: {},
-          ensembleResponses: {}
-        };
-        setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
-        
+          });
+          const aiTurn: AiTurn = {
+            type: 'ai',
+            id: aiTurnId,
+            createdAt: Date.now(),
+            sessionId: currentSessionId,
+            threadId: 'default-thread',
+            userTurnId: userTurn.id,
+            batchResponses: pendingBatch,
+            synthesisResponses: {},
+            ensembleResponses: {}
+          };
+          setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
+        }
+
         activeAiTurnIdRef.current = aiTurnId;
         await api.executeWorkflow(request);
 
@@ -1353,9 +1442,11 @@ const App = () => {
       const loadedMessages: TurnMessage[] = [];
       rounds.forEach((r: any) => {
         const baseTs = Number(r?.createdAt || Date.now());
+        const userIdFromPayload = String(r?.userTurnId || r?.user?.id || '') || `user-${baseTs}`;
+        const aiIdFromPayload = String(r?.aiTurnId || r?.ai?.id || '') || `ai-${baseTs + 1}`;
         loadedMessages.push({
           type: 'user',
-          id: `user-${baseTs}`,
+          id: userIdFromPayload,
           text: String(r?.user?.text || ''),
           createdAt: Number(r?.user?.createdAt || baseTs),
           sessionId
@@ -1373,10 +1464,10 @@ const App = () => {
         });
         const aiTurn: AiTurn = {
           type: 'ai',
-          id: `ai-${baseTs + 1}`,
+          id: aiIdFromPayload,
           createdAt: Number(r?.completedAt || baseTs + 1),
           sessionId,
-          userTurnId: `user-${baseTs}`,
+          userTurnId: userIdFromPayload,
           batchResponses: providerResponses,
           synthesisResponses: {},
           ensembleResponses: {},
