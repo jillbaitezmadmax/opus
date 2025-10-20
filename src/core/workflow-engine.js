@@ -29,8 +29,6 @@ Output Requirements:
 
 
 
-You responded to this query. Your previous response (visible above) must be included in your synthesis alongside the outputs below.
-
 **Responses from other AI models:**
 ${otherResults}
 
@@ -102,13 +100,14 @@ function makeDelta(sessionId, providerId, fullText = "") {
     }
     
     // If common prefix >= 90% of previous text, treat as append
-    if (prefixLen >= prev.length * 0.9) {
+    if (prefixLen >= prev.length * 0.7) {
       delta = fullText.slice(prev.length);
       lastStreamState.set(key, fullText);
       logger.stream('Incremental append:', { providerId, deltaLen: delta.length });
     } else {
-      // This is a rewrite, not an append — ignore to prevent duplication
-      logger.warn(`[makeDelta] Non-append ignored for ${providerId}: commonPrefix=${prefixLen}/${prev.length}`);
+     logger.stream(`Divergence detected for ${providerId}: commonPrefix=${prefixLen}/${prev.length}`);
+      lastStreamState.set(key, fullText);
+      return fullText.slice(prefixLen); // ✅ Emit from divergence point
     }
     return delta;
   }
@@ -121,12 +120,23 @@ function makeDelta(sessionId, providerId, fullText = "") {
 
   // CASE 4: Text got shorter (should never happen in streaming) — error state
   if (fullText.length < prev.length) {
-    logger.error(`[makeDelta] Text regression for ${providerId}:`, { 
+    const regression = prev.length - fullText.length;
+    
+    // ✅ Allow up to 50 char regressions (thinking blocks, corrections)
+    if (regression <= 50) {
+      logger.stream(`Small regression (${regression} chars) for ${providerId} - resetting`);
+      lastStreamState.set(key, fullText);
+      return ""; // Let next chunk provide new delta
+    }
+    
+    logger.error(`[makeDelta] Large text regression for ${providerId}:`, { 
       prevLen: prev.length, 
-      fullLen: fullText.length 
+      fullLen: fullText.length,
+      regression 
     });
     return "";
   }
+
 
   // CASE 5: Fallback (shouldn't reach here, but safe default)
   return "";
@@ -372,6 +382,64 @@ export class WorkflowEngine {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  /**
+   * Resolves provider context using three-tier resolution:
+   * 1. Workflow cache context (highest priority)
+   * 2. Batch step context (medium priority)
+   * 3. Persisted context (fallback)
+   */
+  _resolveProviderContext(providerId, context, payload, workflowContexts, previousResults, stepType = 'step') {
+    const providerContexts = {};
+
+    // Tier 1: Prefer workflow cache context produced within this workflow run
+    if (workflowContexts && workflowContexts[providerId]) {
+      providerContexts[providerId] = {
+        meta: workflowContexts[providerId],
+        continueThread: true
+      };
+      try {
+        console.log(`[WorkflowEngine] ${stepType} using workflow-cached context for ${providerId}: ${Object.keys(workflowContexts[providerId]).join(',')}`);
+      } catch (_) {}
+      return providerContexts;
+    }
+
+    // Tier 2: Fallback to batch step context for backwards compatibility
+    if (payload.continueFromBatchStep) {
+      const batchResult = previousResults.get(payload.continueFromBatchStep);
+      if (batchResult?.status === 'completed' && batchResult.result?.results) {
+        const providerResult = batchResult.result.results[providerId];
+        if (providerResult?.meta) {
+          providerContexts[providerId] = {
+            meta: providerResult.meta,
+            continueThread: true
+          };
+          try {
+            console.log(`[WorkflowEngine] ${stepType} continuing conversation for ${providerId} via batch step`);
+          } catch (_) {}
+          return providerContexts;
+        }
+      }
+    }
+
+    // Tier 3: Last resort use persisted context (may be stale across workflow runs)
+    try {
+      const persisted = this.sessionManager.getProviderContexts(context.sessionId, context.threadId || 'default-thread');
+      const persistedMeta = persisted?.[providerId]?.meta;
+      if (persistedMeta && Object.keys(persistedMeta).length > 0) {
+        providerContexts[providerId] = {
+          meta: persistedMeta,
+          continueThread: true
+        };
+        try {
+          console.log(`[WorkflowEngine] ${stepType} using persisted context for ${providerId}: ${Object.keys(persistedMeta).join(',')}`);
+        } catch (_) {}
+        return providerContexts;
+      }
+    } catch (_) {}
+
+    return providerContexts;
+  }
+
   // ==========================================================================
   // STEP EXECUTORS - FIXED
   // ==========================================================================
@@ -585,39 +653,15 @@ export class WorkflowEngine {
       payload.synthesisProvider
     );
 
-    // Build providerContexts preferring persisted context, then workflow cache,
-    // then fallback to continueFromBatchStep for backwards compatibility.
-    const providerContexts = {};
-    try {
-      const persisted = this.sessionManager.getProviderContexts(context.sessionId, context.threadId || 'default-thread');
-      const persistedMeta = persisted?.[payload.synthesisProvider]?.meta;
-      if (persistedMeta && Object.keys(persistedMeta).length > 0) {
-        providerContexts[payload.synthesisProvider] = {
-          meta: persistedMeta,
-          continueThread: true
-        };
-        console.log(`[WorkflowEngine] Synthesis using persisted context for ${payload.synthesisProvider}: ${Object.keys(persistedMeta).join(',')}`);
-      }
-    } catch (_) {}
-    if (!providerContexts[payload.synthesisProvider] && workflowContexts && workflowContexts[payload.synthesisProvider]) {
-      providerContexts[payload.synthesisProvider] = {
-        meta: workflowContexts[payload.synthesisProvider],
-        continueThread: true
-      };
-      console.log(`[WorkflowEngine] Synthesis using workflow-cached context for ${payload.synthesisProvider}: ${Object.keys(workflowContexts[payload.synthesisProvider]).join(',')}`);
-    } else if (!providerContexts[payload.synthesisProvider] && payload.continueFromBatchStep) {
-      const batchResult = previousResults.get(payload.continueFromBatchStep);
-      if (batchResult?.status === 'completed' && batchResult.result?.results) {
-        const synthProviderResult = batchResult.result.results[payload.synthesisProvider];
-        if (synthProviderResult?.meta) {
-          providerContexts[payload.synthesisProvider] = {
-            meta: synthProviderResult.meta,
-            continueThread: true
-          };
-          console.log(`[WorkflowEngine] Synthesis continuing conversation for ${payload.synthesisProvider} via batch step`);
-        }
-      }
-    }
+    // Resolve provider context using three-tier resolution
+    const providerContexts = this._resolveProviderContext(
+      payload.synthesisProvider, 
+      context, 
+      payload, 
+      workflowContexts, 
+      previousResults, 
+      'Synthesis'
+    );
 
     return new Promise((resolve, reject) => {
       this.orchestrator.executeParallelFanout(synthPrompt, [payload.synthesisProvider], {
@@ -704,39 +748,15 @@ export class WorkflowEngine {
 
     const ensemblePrompt = buildEnsemblerPrompt(payload.originalPrompt, sourceData);
 
-    // Build providerContexts preferring persisted context, then workflow cache,
-    // then fallback to continueFromBatchStep for backwards compatibility.
-    const providerContexts = {};
-    try {
-      const persisted = this.sessionManager.getProviderContexts(context.sessionId, context.threadId || 'default-thread');
-      const persistedMeta = persisted?.[payload.ensembleProvider]?.meta;
-      if (persistedMeta && Object.keys(persistedMeta).length > 0) {
-        providerContexts[payload.ensembleProvider] = {
-          meta: persistedMeta,
-          continueThread: true
-        };
-        console.log(`[WorkflowEngine] Ensemble using persisted context for ${payload.ensembleProvider}: ${Object.keys(persistedMeta).join(',')}`);
-      }
-    } catch (_) {}
-    if (!providerContexts[payload.ensembleProvider] && workflowContexts && workflowContexts[payload.ensembleProvider]) {
-      providerContexts[payload.ensembleProvider] = {
-        meta: workflowContexts[payload.ensembleProvider],
-        continueThread: true
-      };
-      console.log(`[WorkflowEngine] Ensemble using workflow-cached context for ${payload.ensembleProvider}: ${Object.keys(workflowContexts[payload.ensembleProvider]).join(',')}`);
-    } else if (!providerContexts[payload.ensembleProvider] && payload.continueFromBatchStep) {
-      const batchResult = previousResults.get(payload.continueFromBatchStep);
-      if (batchResult?.status === 'completed' && batchResult.result?.results) {
-        const ensembleProviderResult = batchResult.result.results[payload.ensembleProvider];
-        if (ensembleProviderResult?.meta) {
-          providerContexts[payload.ensembleProvider] = {
-            meta: ensembleProviderResult.meta,
-            continueThread: true
-          };
-          console.log(`[WorkflowEngine] Ensemble continuing conversation for ${payload.ensembleProvider} via batch step`);
-        }
-      }
-    }
+    // Resolve provider context using three-tier resolution
+    const providerContexts = this._resolveProviderContext(
+      payload.ensembleProvider, 
+      context, 
+      payload, 
+      workflowContexts, 
+      previousResults, 
+      'Ensemble'
+    );
 
     return new Promise((resolve, reject) => {
       this.orchestrator.executeParallelFanout(ensemblePrompt, [payload.ensembleProvider], {

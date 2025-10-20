@@ -75,6 +75,14 @@ export class WorkflowCompiler {
       } catch (_) {}
     }
 
+    // Calculate latestUserTurnId once for both synthesis and ensemble steps
+    // If there is no batch step in this workflow and no explicit historical turn
+    // provided by the UI, automatically source from the latest completed turn
+    // so synthesis/ensemble works on subsequent rounds without needing explicit UI context.
+    const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
+      ? this._getLatestUserTurnId(sessionId)
+      : null;
+
     // STEP 2: Synthesis (one step per selected synthesis provider)
     if (synthesis?.enabled && synthesis.providers.length > 0) {
       synthesis.providers.forEach((provider) => {
@@ -82,14 +90,7 @@ export class WorkflowCompiler {
         // ✅ RESPECTS providerModes override for determining continuation
         const providerMode = providerModes[provider] || mode;
 
-        // If there is no batch step in this workflow and no explicit historical turn
-        // provided by the UI, automatically source from the latest completed turn
-        // so synthesis works on subsequent rounds without needing explicit UI context.
-        const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
-          ? this._getLatestUserTurnId(sessionId)
-          : null;
-
-        steps.push({
+        const synthStep = {
           stepId: synthStepId,
           type: "synthesis",
           payload: {
@@ -117,14 +118,13 @@ export class WorkflowCompiler {
             useThinking: !!useThinking && provider === "chatgpt",
             attemptNumber: historicalContext?.attemptNumber || 1,
           },
-        });
+        };
+        steps.push(synthStep);
         try {
           console.log('[Compiler] Synthesis step', {
             synthStepId,
             provider,
-            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId) ? batchStepId : undefined,
-            sourceStepIds: (historicalContext?.userTurnId ? undefined : (batchStepId ? [batchStepId] : undefined)),
-            sourceHistorical: (historicalContext?.userTurnId ? { turnId: historicalContext.userTurnId, responseType: historicalContext.sourceType || 'batch' } : (latestUserTurnId ? { turnId: latestUserTurnId, responseType: 'batch' } : undefined))
+            ...synthStep.payload
           });
         } catch (_) {}
       });
@@ -137,12 +137,7 @@ export class WorkflowCompiler {
         // ✅ RESPECTS providerModes override
         const providerMode = providerModes[provider] || mode;
 
-        // Same auto-historical sourcing for ensemble when no batch step exists
-        const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
-          ? this._getLatestUserTurnId(sessionId)
-          : null;
-
-        steps.push({
+        const ensembleStep = {
           stepId: ensembleStepId,
           type: "ensemble",
           payload: {
@@ -170,14 +165,13 @@ export class WorkflowCompiler {
             useThinking: !!useThinking && provider === "chatgpt",
             attemptNumber: historicalContext?.attemptNumber || 1,
           },
-        });
+        };
+        steps.push(ensembleStep);
         try {
           console.log('[Compiler] Ensemble step', {
             ensembleStepId,
             provider,
-            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId) ? batchStepId : undefined,
-            sourceStepIds: (historicalContext?.userTurnId ? undefined : (batchStepId ? [batchStepId] : undefined)),
-            sourceHistorical: (historicalContext?.userTurnId ? { turnId: historicalContext.userTurnId, responseType: historicalContext.sourceType || 'batch' } : (latestUserTurnId ? { turnId: latestUserTurnId, responseType: 'batch' } : undefined))
+            ...ensembleStep.payload
           });
         } catch (_) {}
       });

@@ -1,11 +1,12 @@
 interface ComposerToolbarProps {
-  granularity: 'full' | 'paragraph' | 'sentence';
-  onGranularityChange: (level: 'full' | 'paragraph' | 'sentence') => void;
-  onExit: () => void;
-  onSave: () => void;
-  onExport: () => void;
-  isDirty: boolean;
+  granularity?: 'full' | 'paragraph' | 'sentence';
+  onGranularityChange?: (level: 'full' | 'paragraph' | 'sentence') => void;
+  onExit?: () => void;
+  onSave?: () => void;
+  onExport?: () => void;
+  isDirty?: boolean;
   isSaving?: boolean;
+  editorRef: React.RefObject<any>;
 }
 
 const ComposerToolbar = ({
@@ -16,6 +17,7 @@ const ComposerToolbar = ({
   onExport,
   isDirty,
   isSaving = false,
+  editorRef,
 }: ComposerToolbarProps) => {
   return (
     <div
@@ -99,7 +101,7 @@ const ComposerToolbar = ({
         {(['full', 'paragraph', 'sentence'] as const).map((level) => (
           <button
             key={level}
-            onClick={() => onGranularityChange(level)}
+            onClick={() => onGranularityChange && onGranularityChange(level)}
             style={{
               background: granularity === level ? '#8b5cf6' : 'transparent',
               border: 'none',

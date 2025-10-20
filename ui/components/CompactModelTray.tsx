@@ -284,11 +284,16 @@ const CompactModelTray = ({
                   <button
                     key={provider.id}
                     onClick={() => {
-                      if (!isDisabled && !isLoading) {
+                      if (isDisabled || isLoading) return;
+                      if (mapProviderId === provider.id) {
+                        // Toggle off Map when clicking the already selected provider
+                        onSetEnsembleProvider?.(null);
+                        onToggleEnsemble?.(false);
+                      } else {
                         onSetEnsembleProvider?.(provider.id);
                         onToggleEnsemble?.(true);
-                        setShowMapDropdown(false);
                       }
+                      setShowMapDropdown(false);
                     }}
                     disabled={isDisabled || isLoading}
                     style={{
@@ -396,10 +401,14 @@ const CompactModelTray = ({
                     <button
                       key={provider.id}
                       onClick={() => {
-                        if (!isDisabled && !isLoading) {
+                        if (isDisabled || isLoading) return;
+                        if (unifyProviderId === provider.id) {
+                          // Toggle off Unify when clicking the already selected provider
+                          onSetSynthesisProvider?.(null);
+                        } else {
                           onSetSynthesisProvider?.(provider.id);
-                          setShowUnifyDropdown(false);
                         }
+                        setShowUnifyDropdown(false);
                       }}
                       disabled={isDisabled || isLoading}
                       style={{

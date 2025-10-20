@@ -4,6 +4,8 @@ import { Slate, Editable, withReact, ReactEditor } from 'slate-react';
 import { DndContext, DragEndEvent, PointerSensor, KeyboardSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import { v4 as uuidv4 } from 'uuid';
 import type { AiTurn, TurnMessage, SlateDescendant, GranularUnit, ComposerState, DocumentRecord } from '../../types';
+import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
+import { GhostData } from '../../types/dragDrop';
 import { extractComposableContent, serializeToPlainText } from '../../utils/composerUtils';
 import { useComposerReducer } from '../../hooks/useComposerReducer';
 import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
@@ -11,6 +13,10 @@ import ComposerToolbar from './ComposerToolbar';
 import SourcePanel from './SourcePanel';
 import CanvasEditor from './CanvasEditor';
 import GhostLayer from './GhostLayer';
+import { ComposerModeV2 } from './ComposerModeV2';
+
+// Feature flag for new composer mode
+const USE_NEW_COMPOSER = true;
 
 interface ComposerModeProps {
   allTurns: TurnMessage[];
@@ -55,6 +61,18 @@ const withComposer = (editor: ReactEditor) => {
 };
 
 const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerModeProps) => {
+  // Feature flag check - return new composer if enabled
+  if (USE_NEW_COMPOSER) {
+    return (
+      <ComposerModeV2
+        allTurns={allTurns}
+        sessionId={sessionId}
+        onExit={onExit}
+        onUpdateAiTurn={onUpdateAiTurn}
+      />
+    );
+  }
+
   // State for focused turn in navigation
   const [focusedTurnId, setFocusedTurnId] = useState<string | null>(null);
   
@@ -350,6 +368,7 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
         onExport={handleExport}
         isDirty={composerState.isDirty}
         isSaving={isSaving}
+        editorRef={{ current: editor }}
       />
       
       <DndContext
@@ -368,18 +387,16 @@ const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerM
           }}
         >
           <SourcePanel
-            allTurns={allTurns}
-            granularity={composerState.granularity}
-            sessionId={sessionId}
-            onAddGhost={(ghostData) => {
-              // Compute order based on existing ghosts
-              const ghost = {
-                ...ghostData,
-                order: composerState.ghosts.length
-              } as any;
-              actions.addGhost(ghost);
-            }}
-          />
+  turns={convertTurnMessagesToChatTurns(allTurns)} // ✅ Right prop name + conversion
+  allTurns={allTurns}
+  selectedTurn={undefined}
+  selectedResponse={undefined}
+  onTurnSelect={(turn) => {}}
+  onResponseSelect={(response) => {}}
+  onDragStart={(ghostData: GhostData) => {
+    actions.addGhost({ ...ghostData, order: composerState.ghosts.length });
+  }}
+/>
           
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <CanvasEditor

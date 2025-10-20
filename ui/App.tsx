@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { VariableSizeList as List, ListChildComponentProps } from 'react-window';
 import React from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
+
 import { TurnMessage, UserTurn, AiTurn, ProviderResponse, AppStep, HistorySessionSummary, BackendMessage, LLMProvider, isUserTurn, isAiTurn, UiPhase, FullSessionPayload, ViewMode, ProviderResponseStatus } from './types';
 import { LLM_PROVIDERS_CONFIG, EXAMPLE_PROMPT } from './constants';
 import { computeThinkFlag } from '../src/think/lib/think/computeThinkFlag.js';
@@ -12,9 +13,74 @@ import CompactModelTray from './components/CompactModelTray';
 import { MenuIcon } from './components/Icons';
 import api from './services/extension-api';
 import persistenceService from './services/persistence';
-import { useDelegatedScroll } from './hooks/useDelegatedScroll';
-import Banner from './components/Banner';
 import { StreamingBuffer } from './utils/streamingBuffer';
+import Banner from './components/Banner';
+
+// simple connection hook: event-driven + single probe with generation token
+import { useEffect as _useEffect, useRef as _useRef, useState as _useState, useCallback as _useCallback } from 'react';
+
+type ConnState = 'unknown' | 'connected' | 'reconnecting';
+
+function useConnection(api: {
+  getConnectionStatus: () => Promise<{ isConnected: boolean }> | { isConnected: boolean };
+  onConnectionStateChange?: (cb: (connected: boolean) => void) => () => void;
+}) {
+  const [connState, setConnState] = _useState<ConnState>('unknown');
+  const genRef = _useRef(0);
+  const mountedRef = _useRef(true);
+
+  _useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      genRef.current++;
+    };
+  }, []);
+
+  const probeOnce = _useCallback(async () => {
+    const myGen = ++genRef.current;
+    try {
+      const res = await Promise.resolve(api.getConnectionStatus());
+      if (!mountedRef.current) return false;
+      if (genRef.current !== myGen) return false;
+      const ok = !!(res && (res as any).isConnected);
+      setConnState(ok ? 'connected' : 'reconnecting');
+      return ok;
+    } catch (err) {
+      if (!mountedRef.current) return false;
+      if (genRef.current !== myGen) return false;
+      setConnState('reconnecting');
+      return false;
+    }
+  }, [api]);
+
+  _useEffect(() => {
+    const start = async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      if (!mountedRef.current) return;
+      await probeOnce();
+    };
+    start();
+
+    const unsub = api.onConnectionStateChange?.((connected: boolean) => {
+      if (!mountedRef.current) return;
+      setConnState(connected ? 'connected' : 'reconnecting');
+      genRef.current++;
+    });
+
+    return () => {
+      unsub?.();
+      genRef.current++;
+    };
+  }, [api, probeOnce]);
+
+  const refresh = _useCallback(async () => {
+    return await probeOnce();
+  }, [probeOnce]);
+
+  return { connState, refresh };
+}
+
 import ComposerMode from './components/composer/ComposerMode';
 import { ProviderKey, ExecuteWorkflowRequest } from '../shared/contract';
 
@@ -51,7 +117,9 @@ const App = () => {
     }, {} as Record<string, boolean>)
   );
   const [isVisibleMode, setIsVisibleMode] = useState(true);
-  const [lastSynthesisModel, setLastSynthesisModel] = useState<string>('gemini');
+  const [lastSynthesisModel, setLastSynthesisModel] = useState<string>(() => {
+    return localStorage.getItem('htos_last_synthesis_model') || 'gemini';
+  });
   const [synthesisProvider, setSynthesisProvider] = useState<string | null>('gemini');
   
   // Ensemble state with smart defaults
@@ -71,7 +139,13 @@ const App = () => {
     const saved = localStorage.getItem('htos_ensemble_provider');
     return saved || 'chatgpt';
   });
-  
+  // Add to your state
+const [stepMetadata, setStepMetadata] = useState<Map<string, {
+  type: 'batch' | 'synthesis' | 'ensemble',
+  providerId: string,
+  aiTurnId: string
+}>>(new Map());
+
   // Power user mode state
   const [powerUserMode, setPowerUserMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('htos_power_user_mode');
@@ -89,6 +163,9 @@ const App = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [expandedUserTurns, setExpandedUserTurns] = useState<Record<string, boolean>>({});
   const [isReducedMotion, setIsReducedMotion] = useState(false);
+  const { connState, refresh } = useConnection(api);
+  const [connectionStatus, setConnectionStatus] = useState<{ isConnected: boolean; isReconnecting: boolean }>({ isConnected: false, isReconnecting: true });
+  
   // Round-level action bar selections
   const [synthSelectionsByRound, setSynthSelectionsByRound] = useState<Record<string, Record<string, boolean>>>({});
   const [ensembleSelectionByRound, setEnsembleSelectionByRound] = useState<Record<string, string | null>>({});
@@ -109,15 +186,15 @@ const App = () => {
   const scrollSaveTimeoutRef = useRef<number | undefined>(undefined);
   const didLoadTurnsRef = useRef(false);
   const appStartTimeRef = useRef<number>(Date.now());
-  const listRef = useRef<List | null>(null);
-  const outerScrollRef = useRef<HTMLDivElement | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const lastScrollTopRef = useRef(0);
   const scrollBottomRef = useRef(true);
   const sessionIdRef = useRef<string | null>(null);
   const isSynthRunningRef = useRef(false);
-  const sizeMapRef = useRef<Record<string, number>>({});
   const historyOverlayRef = useRef<HTMLDivElement | null>(null);
   const streamingBufferRef = useRef<StreamingBuffer | null>(null);
+  // Removed: bufferedAiTurnIdRef — single persistent StreamingBuffer no longer tracks per-turn ownership.
+  
   // Valid provider ids for synthesis
   type ValidProvider = 'claude' | 'gemini' | 'chatgpt';
   
@@ -142,7 +219,75 @@ const App = () => {
     localStorage.setItem('htos_synthesis_providers', JSON.stringify(synthesisProviders));
   }, [synthesisProviders]);
 
+  // Ensure Map (ensemble) and Unify (synthesis) use different providers
+  useEffect(() => {
+    if (ensembleEnabled && synthesisProvider && ensembleProvider === synthesisProvider) {
+      const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== synthesisProvider)?.id || null;
+      if (alternate !== ensembleProvider) {
+        setEnsembleProvider(alternate);
+        if (alternate) {
+          localStorage.setItem('htos_ensemble_provider', alternate);
+        } else {
+          localStorage.removeItem('htos_ensemble_provider');
+        }
+      }
+    }
+  }, [ensembleEnabled, synthesisProvider, ensembleProvider, selectedModels]);
+
   // Removed ambiguous helper getAllProviderResponses to prevent synthesis/ensemble from shadowing batch.
+
+  // ============================================================================
+ // Abstract: Connection reducer for state hygiene—handles enums internally, exports boolean for API.
+const connectionReducer = (state: { isConnected: boolean; isReconnecting: boolean }, action: { type: 'UPDATE' | 'RECONNECT'; payload?: boolean }) => {
+  switch (action.type) {
+    case 'UPDATE':
+      return { isConnected: action.payload ?? state.isConnected, isReconnecting: !action.payload && state.isReconnecting };
+    case 'RECONNECT':
+      return { ...state, isReconnecting: true };
+    default:
+      return state;
+  }
+};
+
+// Monitor connection health (merge both effects; reducer handles initial/load)
+// Monitor connection health (merge effects; no dispatch yet)
+useEffect(() => {
+  const handleConnectionStateChange = (connected: boolean) => {
+  console.log(`[App] Connection: ${connected ? 'up' : 'down'}`);
+  setConnectionStatus({ isConnected: !!connected, isReconnecting: !connected });
+};
+
+
+  const unsubscribe = api.onConnectionStateChange(handleConnectionStateChange);
+  api.checkHealth(); // Initial ping
+
+  // Initial load (debounced)
+  // original location: the initial (debounced) connection-status probe
+setTimeout(async () => {
+  try {
+    // await the API in case it returns a Promise
+    const status = await api.getConnectionStatus();
+    const ok = !!(status && status.isConnected);
+    setConnectionStatus({ isConnected: ok, isReconnecting: !ok });
+  } catch (err) {
+    // explicit fallback
+    console.error('getConnectionStatus failed', err);
+    setConnectionStatus({ isConnected: false, isReconnecting: true });
+  }
+}, 500);
+
+
+  return unsubscribe;
+}, []);
+
+// Periodic checks (simplified; tie to loading)
+useEffect(() => {
+  if (!isLoading) return;
+  const interval = setInterval(api.checkHealth, 10000);
+  return () => clearInterval(interval);
+}, [isLoading]);
+
+// In component: const [connectionStatus, dispatch] = useReducer(connectionReducer, { isConnected: true, isReconnecting: false });
 
   // ============================================================================
   // Graceful shutdown handler
@@ -153,7 +298,6 @@ const App = () => {
       // Force flush any pending saves
       try {
         persistenceService.flush?.();
-        streamingBufferRef.current?.flushImmediate();
       } catch (e) {
         console.error('Shutdown save failed:', e);
       }
@@ -171,9 +315,13 @@ const App = () => {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      streamingBufferRef.current?.destroy();
+
     };
   }, []);
+
+  // Removed duplicate connection health effect to prevent conflicting state updates
+
+  // Connection health timers removed; useConnection handles probe + event updates.
 
   // First turn handling
   const isFirstTurn = !messages.some(m => m.type === 'user');
@@ -183,8 +331,7 @@ const App = () => {
       ...prev,
       [turnId]: !(prev[turnId] ?? true)
     }));
-    // Use a timeout to allow state to update before re-measuring
-    setTimeout(() => listRef.current?.resetAfterIndex(0), 0);
+    // Virtuoso handles dynamic sizing automatically
   }, []);
 
   // Remove frequent full re-measures; per-row ResizeObserver handles dynamic size
@@ -317,6 +464,80 @@ const App = () => {
     setViewMode(ViewMode.CHAT);
   }, []);
 
+  // Helper: Create optimistic AI turn with pending responses
+  const createOptimisticAiTurn = useCallback((
+    aiTurnId: string,
+    userTurn: UserTurn,
+    activeProviders: ProviderKey[],
+    shouldUseSynthesis: boolean,
+    shouldUseEnsemble: boolean,
+    synthesisProvider?: string,
+    ensembleProvider?: string
+  ): AiTurn => {
+    if (shouldUseSynthesis || shouldUseEnsemble) {
+      // ✅ Initialize batch responses for the batch step that runs first
+      const pendingBatch: Record<string, ProviderResponse> = {};
+      activeProviders.forEach(pid => {
+        pendingBatch[pid] = {
+          providerId: pid,
+          text: '',
+          status: 'pending',
+          createdAt: Date.now()
+        };
+      });
+      
+      // Unified AI turn with synthesis and/or ensemble
+      return {
+        type: 'ai',
+        id: aiTurnId,
+        createdAt: Date.now(),
+        sessionId: currentSessionId,
+        threadId: 'default-thread',
+        userTurnId: userTurn.id,
+        meta: shouldUseSynthesis ? { synthForUserTurnId: userTurn.id } : undefined,
+        batchResponses: pendingBatch, // ✅ Changed from {}
+        synthesisResponses: shouldUseSynthesis ? {
+          [synthesisProvider as string]: [{
+            providerId: synthesisProvider as ProviderKey,
+            text: '',
+            status: 'pending',
+            createdAt: Date.now()
+          }]
+        } : {},
+        ensembleResponses: shouldUseEnsemble ? {
+          [ensembleProvider as string]: [{
+            providerId: ensembleProvider as ProviderKey,
+            text: '',
+            status: 'pending',
+            createdAt: Date.now()
+          }]
+        } : {}
+      };
+    } else {
+      // Standard batch workflow - create AI turn with pending batch responses
+      const pendingBatch: Record<string, ProviderResponse> = {};
+      activeProviders.forEach(pid => {
+        pendingBatch[pid] = {
+          providerId: pid,
+          text: '',
+          status: 'pending',
+          createdAt: Date.now()
+        };
+      });
+      return {
+        type: 'ai',
+        id: aiTurnId,
+        createdAt: Date.now(),
+        sessionId: currentSessionId,
+        threadId: 'default-thread',
+        userTurnId: userTurn.id,
+        batchResponses: pendingBatch,
+        synthesisResponses: {},
+        ensembleResponses: {}
+      };
+    }
+  }, [currentSessionId]);
+
   // ===== Round helpers: locate round, existing synth/ensemble blocks, and insertion point =====
   const findRoundForUserTurn = useCallback((userTurnId: string) => {
     const userIndex = messages.findIndex(m => m.id === userTurnId);
@@ -435,19 +656,39 @@ const App = () => {
   // ===== Ensemble and synthesis provider handlers =====
   const handleToggleEnsemble = useCallback((enabled: boolean) => {
     setEnsembleEnabled(enabled);
+    // Immediate persistence to prevent stale state
+    localStorage.setItem('htos_ensemble_enabled', JSON.stringify(enabled));
   }, []);
 
   const handleSetEnsembleProvider = useCallback((providerId: string | null) => {
     setEnsembleProvider(providerId);
-  }, []);
+    // If the chosen Map provider matches Unify provider, auto-pick an alternate for Unify
+    if (providerId && synthesisProvider === providerId) {
+      const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== providerId)?.id || null;
+      setSynthesisProvider(alternate);
+      if (alternate) {
+        localStorage.setItem('htos_synthesis_provider', alternate);
+      } else {
+        localStorage.removeItem('htos_synthesis_provider');
+      }
+    }
+    // Immediate persistence to prevent stale state
+    if (providerId) {
+      localStorage.setItem('htos_ensemble_provider', providerId);
+    } else {
+      localStorage.removeItem('htos_ensemble_provider');
+    }
+  }, [synthesisProvider, selectedModels]);
 
   const handleToggleSynthesisProvider = useCallback((providerId: string) => {
     setSynthesisProviders(prev => {
-      if (prev.includes(providerId)) {
-        return prev.filter(id => id !== providerId);
-      } else {
-        return [...prev, providerId];
-      }
+      const newProviders = prev.includes(providerId) 
+        ? prev.filter(id => id !== providerId)
+        : [...prev, providerId];
+      
+      // Immediate persistence to prevent stale state
+      localStorage.setItem('htos_synthesis_providers', JSON.stringify(newProviders));
+      return newProviders;
     });
   }, []);
 
@@ -525,6 +766,7 @@ const App = () => {
 
       if (selected.length === 1) {
         setLastSynthesisModel(selected[0]);
+        localStorage.setItem('htos_last_synthesis_model', selected[0]);
       }
       await api.executeWorkflow(request);
     } catch (err) {
@@ -634,144 +876,19 @@ const App = () => {
     }
   }, [messages, handleRunSynthesisForRound, handleRunEnsembleForRound]);
 
-  // Utility: Estimate item size for virtual list (fallback before actual measure)
-  const itemSizeEstimator = useCallback((index: number): number => {
-    const turn = messages[index];
-    if (!turn) return 100;
-    
-    if (isUserTurn(turn)) {
-      const isExpanded = expandedUserTurns[turn.id] ?? true;
-      const baseHeight = isExpanded ? 80 : 60; // Reduced base height
-      const lineHeight = 21; // 14px font-size * 1.5 line-height
-      const charsPerLine = 100; // Adjusted heuristic
-      
-      if (!isExpanded) {
-        return baseHeight; // Return minimal height for collapsed state
-      }
-      
-      const lines = (turn.text || '').split('\n').reduce((acc, line) => {
-        return acc + Math.max(1, Math.ceil(line.length / charsPerLine));
-      }, 0);
-      
-      const textHeight = lines * lineHeight;
-      return Math.max(80, baseHeight + textHeight); // Ensure minimum height
-    }
 
-    const aiTurn = turn as AiTurn;
 
-    // Hide standalone ensemble rows when grouped under synthesis for the same round
-    if (aiTurn.isEnsembleAnswer) {
-      const roundUserId = (aiTurn.meta as any)?.synthForUserTurnId;
-      if (roundUserId) {
-        // Check if there's a synthesis turn for this round that contains ensemble responses
-        const round = findRoundForUserTurn(roundUserId);
-        const synthTurn = round?.ai;
-        if (synthTurn?.isSynthesisAnswer && synthTurn.ensembleResponses && Object.keys(synthTurn.ensembleResponses).length > 0) {
-          return 1; // effectively hide the ensemble row; content is rendered under synthesis
-        }
-      }
-    }
 
-    // Special handling for synthesis answers (larger height)
-    if (aiTurn.isSynthesisAnswer) {
-      const baseHeight = 150; // Increased base height for special answers
-      const synthesisText = Object.values(aiTurn.synthesisResponses || {}).flat()[0]?.text || '';
-      const content = synthesisText || Object.values(aiTurn.providerResponses || {})[0]?.text || '';
-      const lineHeight = 21;
-      const charsPerLine = 100;
 
-      const lines = content.split('\n').reduce((acc, line) => {
-        return acc + Math.max(1, Math.ceil(line.length / charsPerLine));
-      }, 0);
 
-      const textHeight = lines * lineHeight;
-      // Add extra height for the action bar and padding
-      return Math.max(240, baseHeight + textHeight + 120);
-    }
-    
-    // Regular AI turn
-    const providerCount = Object.keys(aiTurn.providerResponses || {}).length;
-    const baseHeight = 100;
-    const perProviderHeight = 180;
 
-    // heuristic cap to avoid extremely tall rows
-    return Math.min(1000, baseHeight + providerCount * perProviderHeight);
-  }, [messages, expandedUserTurns]);
+  // Removed manual scroll stick; Virtuoso followOutput manages auto-scroll.
 
-  // Item size getter backed by measurement map with estimator as fallback
-  const getItemSize = useCallback((index: number): number => {
-    const turn = messages[index];
-    if (!turn) return 100;
-    const measured = sizeMapRef.current[turn.id];
-    return typeof measured === 'number' && measured > 0
-      ? measured
-      : itemSizeEstimator(index);
-  }, [messages, itemSizeEstimator]);
+  // Removed: getOrInitStreamingBuffer — buffer initialized once in port handler per clearup logic.
 
-  // Keep size map in sync with messages (remove stale ids)
-  useEffect(() => {
-    const validIds = new Set(messages.map((m: TurnMessage) => m.id));
-    Object.keys(sizeMapRef.current).forEach(id => {
-      if (!validIds.has(id)) {
-        delete sizeMapRef.current[id];
-      }
-    });
-    // After significant list changes, recompute sizes
-    try { listRef.current?.resetAfterIndex(0, true); } catch {}
-  }, [messages]);
+  // Removed manual scroll effect; Virtuoso followOutput handles scroll.
 
-  // Helper: determine if user is near the bottom of the outer scroller
-  const isNearBottom = useCallback(() => {
-    const el = outerScrollRef.current;
-    if (!el) return true;
-    const distance = el.scrollHeight - el.clientHeight - el.scrollTop;
-    return distance <= 80; // px threshold
-  }, []);
-
-  // Handle scroll on the outer scroller: track last scrollTop, update stickiness, and debounce-save position
-  const handleOuterScroll = useCallback(() => {
-    const el = outerScrollRef.current;
-    if (!el) return;
-    lastScrollTopRef.current = el.scrollTop;
-    scrollBottomRef.current = isNearBottom();
-
-    // Debounce persist
-    if (scrollSaveTimeoutRef.current) window.clearTimeout(scrollSaveTimeoutRef.current);
-    scrollSaveTimeoutRef.current = window.setTimeout(() => {
-      persistenceService.saveScrollPosition(el.scrollTop, currentSessionId).catch(console.error);
-    }, 500) as unknown as number;
-  }, [currentSessionId, isNearBottom]);
-
-  useDelegatedScroll(outerScrollRef);
-
-  // Utility: Auto-scroll to bottom while streaming
-  const useScrollStick = useCallback(() => {
-    if (scrollBottomRef.current && listRef.current) {
-      listRef.current.scrollToItem(messages.length - 1);
-    }
-  }, [messages.length]);
-
-  // Auto-scroll effect
-  useEffect(() => {
-    useScrollStick();
-  }, [messages.length, useScrollStick]);
-
-  // When messages change, notify react-window to recompute sizes.
-  // Using resetAfterIndex(0, true) to force a full re-measure (safe, occasional).
-  useEffect(() => {
-    // Minor debounce/guard: only call if listRef exists
-    if (listRef.current) {
-      try {
-        // true -> also recompute the item sizes immediately
-        listRef.current.resetAfterIndex(0, true);
-      } catch (e) {
-        // guard for unexpected internals
-        // don't throw in production UI render
-        console.warn('[UI] listRef.resetAfterIndex failed', e);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length]);
+  // Virtuoso handles size computation automatically, no manual intervention needed
 
   // Bootstrap from persistence on startup
   useEffect(() => {
@@ -816,61 +933,70 @@ const App = () => {
     }
   }, []);
 
+  const getStepType = (stepId: string): 'batch' | 'synthesis' | 'ensemble' | null => {
+    if (stepId.startsWith('batch-')) return 'batch';
+    if (stepId.startsWith('synthesis-')) return 'synthesis';
+    if (stepId.startsWith('ensemble-')) return 'ensemble';
+    return null;
+  };
+
  // ============================================================================
   // NEW: Unified Port Message Handler
   // This replaces the entire old `createPortMessageHandler`.
   // ============================================================================
   const createPortMessageHandler = useCallback(() => {
+    // Initialize a single persistent StreamingBuffer bound to the active AI turn
     if (!streamingBufferRef.current) {
-      streamingBufferRef.current = new StreamingBuffer(
-        (providerId, textUpdate, status, responseType: 'batch' | 'synthesis' | 'ensemble') => {
-          const activeId = activeAiTurnIdRef.current;
-          if (!providerId || !activeId) return;
-
-          updateAiTurnById(activeId, (aiTurn: AiTurn) => {
-            if (aiTurn.id !== activeId) return aiTurn;
-
-            const isCompletion = status === 'completed' || status === 'error';
-            
-            const getUpdatedTake = (existingTake: ProviderResponse | undefined): ProviderResponse => {
-                const base = (existingTake && existingTake.status !== 'completed' && existingTake.status !== 'error')
-                    ? existingTake
-                    : { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
-                
-                return {
-                    ...base,
-                    text: isCompletion ? textUpdate : (base.text + textUpdate),
-                    status: status as ProviderResponseStatus,
-                    updatedAt: Date.now()
-                };
-            };
-
-            if (responseType === 'synthesis') {
-                const map = { ...(aiTurn.synthesisResponses || {}) };
-                const takes = map[providerId] || [];
-                const updatedTake = getUpdatedTake(takes[takes.length - 1]);
-                map[providerId] = [...takes.slice(0, -1), updatedTake];
-                return { ...aiTurn, synthesisResponses: map };
-            } else if (responseType === 'ensemble') {
-                const map = { ...(aiTurn.ensembleResponses || {}) };
-                const takes = map[providerId] || [];
-                const updatedTake = getUpdatedTake(takes[takes.length - 1]);
-                map[providerId] = [...takes.slice(0, -1), updatedTake];
-                return { ...aiTurn, ensembleResponses: map };
-            } else { // 'batch'
-                const map = { ...(aiTurn.batchResponses || {}) };
-                const existing = map[providerId] || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
-                map[providerId] = {
+      streamingBufferRef.current = new StreamingBuffer((providerId: string, delta: string, status: string, responseType: 'batch' | 'synthesis' | 'ensemble') => {
+        const activeId = activeAiTurnIdRef.current;
+        if (!activeId) return;
+        updateAiTurnById(activeId, (turn: AiTurn) => {
+          switch (responseType) {
+            case 'batch': {
+              const existing = turn.batchResponses?.[providerId] || { providerId, text: '', status: 'pending', createdAt: Date.now() };
+              return {
+                ...turn,
+                batchResponses: {
+                  ...turn.batchResponses,
+                  [providerId]: {
                     ...existing,
-                    text: isCompletion ? textUpdate : (existing.text + textUpdate),
+                    text: existing.text + delta,
                     status: status as ProviderResponseStatus,
-                    updatedAt: Date.now()
-                };
-                return { ...aiTurn, batchResponses: map };
+                  }
+                }
+              };
             }
-          });
-        }
-      );
+            case 'synthesis': {
+              const existingResponses = turn.synthesisResponses?.[providerId] || [];
+              const updatedResponses = existingResponses.length > 0
+                ? existingResponses.map((r, idx) => idx === 0 ? { ...r, text: r.text + delta, status: status as ProviderResponseStatus } : r)
+                : [{ providerId: providerId as ProviderKey, text: delta, status: status as ProviderResponseStatus, createdAt: Date.now() }];
+              return {
+                ...turn,
+                synthesisResponses: {
+                  ...turn.synthesisResponses,
+                  [providerId]: updatedResponses
+                }
+              };
+            }
+            case 'ensemble': {
+              const existingResponses = turn.ensembleResponses?.[providerId] || [];
+              const updatedResponses = existingResponses.length > 0
+                ? existingResponses.map((r, idx) => idx === 0 ? { ...r, text: r.text + delta, status: status as ProviderResponseStatus } : r)
+                : [{ providerId: providerId as ProviderKey, text: delta, status: status as ProviderResponseStatus, createdAt: Date.now() }];
+              return {
+                ...turn,
+                ensembleResponses: {
+                  ...turn.ensembleResponses,
+                  [providerId]: updatedResponses
+                }
+              };
+            }
+            default:
+              return turn;
+          }
+        });
+      });
     }
 
     return (message: any) => {
@@ -898,36 +1024,27 @@ const App = () => {
          }
 
          case 'PARTIAL_RESULT': {
-           const { stepId, providerId, chunk, sessionId: msgSessionId } = message;
-           if (!providerId || !chunk?.text) return;
+          const { stepId, providerId, chunk, sessionId: msgSessionId } = message;
+          if (!providerId || !chunk?.text) return;
 
-           // Ignore messages from other sessions to prevent cross-chat attachment
-           if (msgSessionId && currentSessionId && msgSessionId !== currentSessionId) {
-             try { console.warn(`[Port Handler] Ignoring PARTIAL_RESULT from session ${msgSessionId} (active ${currentSessionId})`); } catch (e) {}
-             return;
-           }
+          // Ignore messages from other sessions to prevent cross-chat attachment
+          if (msgSessionId && currentSessionId && msgSessionId !== currentSessionId) {
+            try { console.warn(`[Port Handler] Ignoring PARTIAL_RESULT from session ${msgSessionId} (active ${currentSessionId})`); } catch (e) {}
+            return;
+          }
 
-           // Determine response type based on stepId markers
-           let responseType: 'batch' | 'synthesis' | 'ensemble' | 'unknown' = 'unknown';
-           if (typeof stepId === 'string') {
-             if (stepId.includes('synthesis')) responseType = 'synthesis';
-             else if (stepId.includes('ensemble')) responseType = 'ensemble';
-             else if (stepId.includes('batch') || stepId.includes('prompt')) responseType = 'batch';
-           }
+          // ✅ Detect step type from stepId pattern
+          const stepType = getStepType(stepId);
 
-           if (responseType === 'unknown') {
-             try { console.warn(`[Port Handler] Unknown stepId routing for PARTIAL_RESULT: ${String(stepId)}`); } catch (e) {}
-             // Do not default to batch; avoid misrouting duplicates
-             return;
-           }
+          if (!stepType) {
+            console.warn(`[Port] Unknown stepId pattern: ${stepId}`);
+            return;
+          }
 
-           console.log('[UI] Processing PARTIAL_RESULT:', stepId, providerId, chunk?.text?.substring(0, 30));
-           try { console.log(`[Port Handler] Routing partial for ${providerId} to ${responseType} (stepId: ${stepId})`); } catch (e) {}
+           streamingBufferRef.current?.addDelta(providerId, chunk.text, 'streaming', stepType);
 
-           streamingBufferRef.current?.addDelta(providerId, chunk.text, 'streaming', responseType);
-           
            if (chunk.meta) {
-            setProviderContexts((prev: Record<string, any>) => ({ ...prev, [providerId]: { ...(prev[providerId] || {}), ...chunk.meta } }));
+             setProviderContexts((prev: Record<string, any>) => ({ ...prev, [providerId]: { ...(prev[providerId] || {}), ...chunk.meta } }));
            }
            break;
          }
@@ -941,6 +1058,8 @@ const App = () => {
            }
 
            if (status === 'completed' && result) {
+             // Ensure buffered streaming deltas are applied before marking complete
+             streamingBufferRef.current?.flushImmediate();
              // A step can complete with a single result or a map of results for each provider
              const resultsMap = result.results || (result.providerId ? { [result.providerId]: result } : {});
              
@@ -961,7 +1080,32 @@ const App = () => {
                  // Debug: show completion routing for provider results
                  try { console.log(`[Port Handler] Completing ${responseType} for ${providerId}: ${String(data.text || '').substring(0,50)}`); } catch (e) {}
                  
-                 streamingBufferRef.current?.setComplete(providerId, data.text || '', 'completed', responseType);
+                 const activeId = activeAiTurnIdRef.current;
+                 if (!activeId) return;
+                 updateAiTurnById(activeId, (aiTurn: AiTurn) => {
+                   if (responseType === 'synthesis') {
+                     const map = { ...(aiTurn.synthesisResponses || {}) };
+                     const takes = map[providerId] || [];
+                     const last = takes[takes.length - 1];
+                     const base = last || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
+                     const updated = { ...base, text: (data.text || base.text || ''), status: 'completed' as const, updatedAt: Date.now() };
+                     map[providerId] = [...takes.slice(0, -1), updated];
+                     return { ...aiTurn, synthesisResponses: map };
+                   } else if (responseType === 'ensemble') {
+                     const map = { ...(aiTurn.ensembleResponses || {}) };
+                     const takes = map[providerId] || [];
+                     const last = takes[takes.length - 1];
+                     const base = last || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
+                     const updated = { ...base, text: (data.text || base.text || ''), status: 'completed' as const, updatedAt: Date.now() };
+                     map[providerId] = [...takes.slice(0, -1), updated];
+                     return { ...aiTurn, ensembleResponses: map };
+                   } else {
+                     const map = { ...(aiTurn.batchResponses || {}) };
+                     const existing = map[providerId] || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
+                     map[providerId] = { ...existing, text: (data.text || existing.text || ''), status: 'completed' as const, updatedAt: Date.now() };
+                     return { ...aiTurn, batchResponses: map };
+                   }
+                 });
              });
 
             // Note: provider context handling is performed by the backend. UI
@@ -983,14 +1127,14 @@ const App = () => {
            // Save current active AI turn id before we clear it
            const completedTurnId = activeAiTurnIdRef.current;
 
+           // Finalize streaming buffer and clear active turn reference
+           streamingBufferRef.current?.flushImmediate();
+
            setIsLoading(false);
            setUiPhase('awaiting_action');
            setIsContinuationMode(true);
 
-           // Ensure buffered streaming is flushed to the UI before we clear the active turn
-           streamingBufferRef.current?.flushImmediate(); // Ensure all buffered text is rendered
-
-           // Clear the active turn reference AFTER flushing so any flush-side effects can still use it
+           // Clear the active turn reference
            activeAiTurnIdRef.current = null;
 
            if (completedTurnId) {
@@ -1046,11 +1190,11 @@ const App = () => {
     return () => {};
   }, [isHistoryPanelOpen]);
 
-  // Scroll position persistence (before unload only; routine saves handled in handleOuterScroll)
+  // Scroll position persistence (before unload only)
   useEffect(() => {
     const saveScrollPosition = () => {
-      const el = outerScrollRef.current;
-      const position = el ? el.scrollTop : 0;
+      // With Virtuoso managing scroll, we persist a neutral position
+      const position = 0;
       persistenceService.saveScrollPosition(position, currentSessionId).catch(console.error);
     };
 
@@ -1061,20 +1205,7 @@ const App = () => {
     };
   }, [currentSessionId]);
 
-  // Attach scroll listener to the actual react-window outer scroller and
-  // update the outerScrollRef to point at it for consistent behavior
-  useEffect(() => {
-    const list = listRef.current as any;
-    const el: HTMLDivElement | null = list && (list._outerRef as HTMLDivElement | null);
-    if (!el) return;
-    outerScrollRef.current = el as HTMLDivElement;
-    // Initialize stickiness based on current position
-    scrollBottomRef.current = isNearBottom();
-    el.addEventListener('scroll', handleOuterScroll, { passive: true });
-    return () => {
-      try { el.removeEventListener('scroll', handleOuterScroll as any); } catch {}
-    };
-  }, [handleOuterScroll, isNearBottom, listRef]);
+
 
   // Accessible focus trap for History overlay (Esc to close; tab loop contained)
   useEffect(() => {
@@ -1164,13 +1295,13 @@ const App = () => {
     
     // 2. Build workflow using declarative ExecuteWorkflowRequest
     try {
-      const shouldUseSynthesis = synthesisProvider && activeProviders.length > 1;
+      const shouldUseSynthesis = !!(synthesisProvider && activeProviders.length > 1);
       
       // Calculate ensemble settings
-      const shouldUseEnsemble = ensembleEnabled && 
+      const shouldUseEnsemble = !!(ensembleEnabled && 
                                ensembleProvider && 
                                activeProviders.length > 1 && 
-                               activeProviders.includes(ensembleProvider as ProviderKey);
+                               activeProviders.includes(ensembleProvider as ProviderKey));
       
       // Determine mode: only new-conversation when no session or first message
       const mode: 'new-conversation' | 'continuation' = (!currentSessionId || messages.length === 0) ? 'new-conversation' : 'continuation';
@@ -1195,59 +1326,17 @@ const App = () => {
         useThinking: computeThinkFlag({ modeThinkButtonOn: thinkOnChatGPT, input: prompt })
        };
 
-      if (shouldUseSynthesis || shouldUseEnsemble) {
-        // Optimistically create unified AI turn with synthesis and/or ensemble
-        const unifiedAiTurn: AiTurn = {
-          type: 'ai',
-          id: aiTurnId,
-          createdAt: Date.now(),
-          sessionId: currentSessionId,
-          threadId: 'default-thread',
-          userTurnId: userTurn.id,
-          meta: shouldUseSynthesis ? { synthForUserTurnId: userTurn.id } : undefined,
-          batchResponses: {},
-          synthesisResponses: shouldUseSynthesis ? {
-            [synthesisProvider]: [{
-              providerId: synthesisProvider as ProviderKey,
-              text: '',
-              status: 'pending',
-              createdAt: Date.now()
-            }]
-          } : {},
-          ensembleResponses: shouldUseEnsemble ? {
-            [ensembleProvider]: [{
-              providerId: ensembleProvider as ProviderKey,
-              text: '',
-              status: 'pending',
-              createdAt: Date.now()
-            }]
-          } : {}
-        };
-        setMessages((prev: TurnMessage[]) => [...prev, unifiedAiTurn]);
-      } else {
-        // Standard batch workflow - optimistically create AI turn with pending batch responses
-        const pendingBatch: Record<string, ProviderResponse> = {};
-        activeProviders.forEach(pid => {
-          pendingBatch[pid] = {
-            providerId: pid,
-            text: '',
-            status: 'pending',
-            createdAt: Date.now()
-          };
-        });
-        const aiTurn: AiTurn = {
-          type: 'ai',
-          id: aiTurnId,
-          createdAt: Date.now(),
-          sessionId: currentSessionId,
-          threadId: 'default-thread',
-          userTurnId: userTurn.id,
-          batchResponses: pendingBatch,
-          synthesisResponses: {},
-          ensembleResponses: {}
-        };
-        setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
-      }
+      // Create optimistic AI turn using helper function
+      const aiTurn = createOptimisticAiTurn(
+        aiTurnId,
+        userTurn,
+        activeProviders,
+        shouldUseSynthesis,
+        shouldUseEnsemble,
+        synthesisProvider || undefined,
+        ensembleProvider || undefined
+      );
+      setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
 
       activeAiTurnIdRef.current = aiTurnId;
       await api.executeWorkflow(request);
@@ -1291,11 +1380,11 @@ const App = () => {
     
     try {
         // Determine synthesis/ensemble settings for continuation, same as initial send
-        const shouldUseSynthesis = !!synthesisProvider && activeProviders.length > 1;
-        const shouldUseEnsemble = ensembleEnabled &&
-                                  !!ensembleProvider &&
+        const shouldUseSynthesis = !!(synthesisProvider && activeProviders.length > 1);
+        const shouldUseEnsemble = !!(ensembleEnabled &&
+                                  ensembleProvider &&
                                   activeProviders.length > 1 &&
-                                  activeProviders.includes(ensembleProvider as ProviderKey);
+                                  activeProviders.includes(ensembleProvider as ProviderKey));
 
         // Debug: log gating and provider selections for continuation
         try {
@@ -1328,59 +1417,17 @@ const App = () => {
           useThinking: computeThinkFlag({ modeThinkButtonOn: thinkOnChatGPT, input: trimmed })
         };
 
-        if (shouldUseSynthesis || shouldUseEnsemble) {
-          // Optimistically create unified AI turn with pending synthesis/ensemble
-          const unifiedAiTurn: AiTurn = {
-            type: 'ai',
-            id: aiTurnId,
-            createdAt: Date.now(),
-            sessionId: currentSessionId,
-            threadId: 'default-thread',
-            userTurnId: userTurn.id,
-            meta: shouldUseSynthesis ? { synthForUserTurnId: userTurn.id } : undefined,
-            batchResponses: {},
-            synthesisResponses: shouldUseSynthesis ? {
-              [synthesisProvider as string]: [{
-                providerId: synthesisProvider as ProviderKey,
-                text: '',
-                status: 'pending',
-                createdAt: Date.now()
-              }]
-            } : {},
-            ensembleResponses: shouldUseEnsemble ? {
-              [ensembleProvider as string]: [{
-                providerId: ensembleProvider as ProviderKey,
-                text: '',
-                status: 'pending',
-                createdAt: Date.now()
-              }]
-            } : {}
-          };
-          setMessages((prev: TurnMessage[]) => [...prev, unifiedAiTurn]);
-        } else {
-          // Standard batch continuation — optimistic pending batch outputs
-          const pendingBatch: Record<string, ProviderResponse> = {};
-          activeProviders.forEach(pid => {
-            pendingBatch[pid] = {
-              providerId: pid,
-              text: '',
-              status: 'pending',
-              createdAt: Date.now()
-            };
-          });
-          const aiTurn: AiTurn = {
-            type: 'ai',
-            id: aiTurnId,
-            createdAt: Date.now(),
-            sessionId: currentSessionId,
-            threadId: 'default-thread',
-            userTurnId: userTurn.id,
-            batchResponses: pendingBatch,
-            synthesisResponses: {},
-            ensembleResponses: {}
-          };
-          setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
-        }
+        // Create optimistic AI turn using helper function
+        const aiTurn = createOptimisticAiTurn(
+          aiTurnId,
+          userTurn,
+          activeProviders,
+          shouldUseSynthesis,
+          shouldUseEnsemble,
+          synthesisProvider || undefined,
+          ensembleProvider || undefined
+        );
+        setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
 
         activeAiTurnIdRef.current = aiTurnId;
         await api.executeWorkflow(request);
@@ -1469,25 +1516,16 @@ const App = () => {
           sessionId,
           userTurnId: userIdFromPayload,
           batchResponses: providerResponses,
-          synthesisResponses: {},
-          ensembleResponses: {},
+          synthesisResponses: r.synthesisResponses || {},
+          ensembleResponses: r.ensembleResponses || {},
           providerResponses // legacy kept as shorthand
         } as AiTurn;
         loadedMessages.push(aiTurn);
       });
       setMessages(loadedMessages);
 
-      // Set continuation contexts from backend snapshot
-      const providerContexts = s?.providerContexts || {};
-      for (const [pid, ctx] of Object.entries(providerContexts)) {
-        api.updateProviderContext(pid, ctx);
-      }
-
-      api.setSessionId(sessionId);
-      const port = await api.ensurePort({ sessionId });
-      if (port) {
-        port.postMessage({ type: 'sync_contexts', sessionId, providerContexts });
-      }
+      // ✅ Context is already loaded - just ensure port exists
+await api.ensurePort({ sessionId });
 
       setShowWelcome(false);
       // Determine app step
@@ -1505,16 +1543,7 @@ const App = () => {
           setIsContinuationMode(hasAiTurn);
         }
       }
-      // Restore scroll if applicable (outer scroller, not window)
-      const scrollState = await persistenceService.loadScrollPosition();
-      if (scrollState && scrollState.sessionId === sessionId) {
-        setTimeout(() => {
-          const el = outerScrollRef.current;
-          if (el) el.scrollTop = scrollState.position || 0;
-          // Update stickiness after restore
-          scrollBottomRef.current = isNearBottom();
-        }, 100);
-      }
+      // Note: Scroll restoration removed - Virtuoso handles scroll position internally
     } catch (error) {
       console.error('Error loading session:', error);
       setMessages([]);
@@ -1558,97 +1587,55 @@ const App = () => {
     }
   }, [isHistoryPanelOpen, currentSessionId]);
 
-  // Row typed as react-window child
-  const Row: React.FC<ListChildComponentProps> = ({ index, style }: ListChildComponentProps) => {
-    // Hooks must be at top level
-    const containerRef = useRef<HTMLDivElement | null>(null);
+  // Row component for Virtuoso (memoized to reduce unnecessary re-renders)
+  const Row = React.memo(({ index }: { index: number }) => {
     const turn = messages[index];
-
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el || !turn) return;
-
-      let prev = sizeMapRef.current[turn.id] || 0;
-      const measure = () => {
-        const rect = el.getBoundingClientRect();
-        const height = Math.ceil(rect.height);
-        if (height && Math.abs(height - prev) > 1) {
-          const delta = height - prev;
-          sizeMapRef.current[turn.id] = height;
-          prev = height;
-
-          // Preserve viewport: if user is mid-scroll, offset outer scrollTop by delta
-          const outer = outerScrollRef.current;
-          const isMidScroll = outer ? outer.scrollTop > 0 && outer.scrollTop !== lastScrollTopRef.current : false;
-
-          requestAnimationFrame(() => {
-            try { listRef.current?.resetAfterIndex(index, true); } catch {}
-            if (outer) {
-              if (scrollBottomRef.current) {
-                outer.scrollTop = outer.scrollHeight - outer.clientHeight;
-              } else if (isMidScroll) {
-                outer.scrollTop += delta;
-              }
-            }
-          });
-        }
-      };
-
-      measure();
-      const ro = new ResizeObserver(() => measure());
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, [index, turn && turn.id, expandedUserTurns[turn?.id || ''] , isReducedMotion, currentAppStep]);
 
     if (turn && isUserTurn(turn)) {
       const { synthMap, ensembleMap, disableSynthesisRun, disableEnsembleRun } = buildEligibleMapForRound(turn.id);
       return (
-        <div style={style}>
-          <div ref={containerRef} style={{ padding: '8px 0' }}>
-            <UserTurnBlock
-              userTurn={turn as UserTurn}
-              isExpanded={expandedUserTurns[turn.id] ?? true}
-              onToggle={handleToggleUserTurn}
-            />
-          </div>
+        <div style={{ padding: '8px 0' }}>
+          <UserTurnBlock
+            userTurn={turn as UserTurn}
+            isExpanded={expandedUserTurns[turn.id] ?? true}
+            onToggle={handleToggleUserTurn}
+          />
         </div>
       );
     }
 
     return (
-      <div style={style}>
-        <div ref={containerRef} style={{ padding: '8px 0' }}>
-          {turn && isAiTurn(turn) ? (() => {
-            const ai = turn as AiTurn;
+      <div style={{ padding: '8px 0' }}>
+        {turn && isAiTurn(turn) ? (() => {
+          const ai = turn as AiTurn;
 
+          // Compose ensemble output under the synthesis turn for layered rendering
+          let aiForRender: AiTurn = ai;
+          if (ai.isSynthesisAnswer) {
+            // The synthesis turn already contains ensemble responses in the unified model
+            aiForRender = ai; // No need to merge from separate turns
+          }
 
-            // Compose ensemble output under the synthesis turn for layered rendering
-            let aiForRender: AiTurn = ai;
-            if (ai.isSynthesisAnswer) {
-              // The synthesis turn already contains ensemble responses in the unified model
-              aiForRender = ai; // No need to merge from separate turns
-            }
-
-            return (
-              <AiTurnBlock
-                aiTurn={aiForRender}
-                isLive={turn.id === activeAiTurnIdRef.current}
-                isReducedMotion={isReducedMotion}
-                isLoading={isLoading}
-                currentAppStep={currentAppStep}
-                showSourceOutputs={showSourceOutputs}
-                onToggleSourceOutputs={() => setShowSourceOutputs(prev => !prev)}
-                onEnterComposerMode={handleEnterComposerMode}
-                activeSynthesisClipProviderId={activeClips[aiForRender.id]?.synthesis}
-                activeEnsembleClipProviderId={activeClips[aiForRender.id]?.ensemble}
-                onClipClick={(type, providerId) => handleClipClick(aiForRender.id, type, providerId)}
-              />
-            );
-          })() : null}
-        </div>
+          return (
+            <AiTurnBlock
+              aiTurn={aiForRender}
+              isLive={turn.id === activeAiTurnIdRef.current}
+              isReducedMotion={isReducedMotion}
+              isLoading={isLoading}
+              currentAppStep={currentAppStep}
+              showSourceOutputs={showSourceOutputs}
+              onToggleSourceOutputs={() => setShowSourceOutputs(prev => !prev)}
+              onEnterComposerMode={handleEnterComposerMode}
+              activeSynthesisClipProviderId={activeClips[aiForRender.id]?.synthesis}
+              activeEnsembleClipProviderId={activeClips[aiForRender.id]?.ensemble}
+              onClipClick={(type, providerId) => handleClipClick(aiForRender.id, type, providerId)}
+            />
+          );
+        })() : null}
       </div>
     );
-  };
+  }, (prev, next) => prev.index === next.index);
+
 
   // Helpers used in JSX
   const handleToggleModel = (providerId: string) => {
@@ -1657,6 +1644,22 @@ const App = () => {
 
   const handleSetSynthesisProvider = (providerId: string | null) => {
     setSynthesisProvider(providerId);
+    // If the chosen Unify provider matches Map provider, auto-pick an alternate for Map
+    if (providerId && ensembleProvider === providerId) {
+      const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== providerId)?.id || null;
+      setEnsembleProvider(alternate);
+      if (alternate) {
+        localStorage.setItem('htos_ensemble_provider', alternate);
+      } else {
+        localStorage.removeItem('htos_ensemble_provider');
+      }
+    }
+    // Immediate persistence to prevent stale state
+    if (providerId) {
+      localStorage.setItem('htos_synthesis_provider', providerId);
+    } else {
+      localStorage.removeItem('htos_synthesis_provider');
+    }
   };
 
   const activeProviderCount = LLM_PROVIDERS_CONFIG.filter((p: LLMProvider) => selectedModels[p.id]).length;
@@ -1665,8 +1668,39 @@ const App = () => {
     setViewMode(mode);
   };
 
+  const ConnectionStatusBanner = () => {
+    if (connState !== 'reconnecting') return null;
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        background: 'yellow',
+        color: '#111827',
+        padding: 8,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        justifyContent: 'center',
+        zIndex: 9999
+      }}>
+        <strong>Reconnecting…</strong>
+        <button onClick={() => refresh()} style={{
+          background: '#f59e0b',
+          color: '#fff',
+          border: 'none',
+          borderRadius: 6,
+          padding: '4px 8px',
+          cursor: 'pointer'
+        }}>Retry now</button>
+      </div>
+    );
+  };
+
   return (
     <div className="sidecar-app-container" style={{ display: 'flex', height: '100vh', overflow: 'hidden', gap: '0px', padding: '0' }}>
+      <ConnectionStatusBanner />
       <div
         className="main-content-wrapper"
         style={{
@@ -1809,21 +1843,17 @@ const App = () => {
               )}
 
               {!showWelcome && (
-                <div ref={outerScrollRef} style={{ height: Math.max(300, window.innerHeight - 220), overflowY: 'hidden', overflowX: 'hidden', padding: '0' }}>
-                <List
-                  ref={listRef}
-                  height={Math.max(300, window.innerHeight - 220)}
-                  width={'100%'}
-                  itemCount={messages.length}
-                  itemSize={(index: number) => getItemSize(index)}
-                  itemKey={(index: number) => messages[index]?.id || String(index)}
-                  overscanCount={5}
-                  estimatedItemSize={160}
-                  style={{ padding: '8px 0' }}
-                >
-                  {Row}
-                </List>
-                </div>
+                <Virtuoso
+                  ref={virtuosoRef}
+                  style={{ height: Math.max(300, window.innerHeight - 220), padding: '8px 0' }}
+                  data={messages}
+                  itemContent={(index, message) => <Row index={index} />}
+                  followOutput="auto"
+                  alignToBottom
+                  overscan={8}
+                  computeItemKey={(index, message) => (message as any).id}
+                  increaseViewportBy={{ top: 200, bottom: 800 }}
+                />
               )}
             </div>
           ) : viewMode === ViewMode.COMPOSER ? (

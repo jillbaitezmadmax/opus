@@ -20,6 +20,15 @@ export class SessionManager {
   }
 
   /**
+   * Helper function to count responses in a response bucket
+   * @param {Object} responseBucket - Object containing provider responses
+   * @returns {number} Total count of responses
+   */
+  countResponses(responseBucket) {
+    return responseBucket ? Object.values(responseBucket).flat().length : 0;
+  }
+
+  /**
    * Initialize the session manager.
    * It now accepts the persistence adapter as an argument.
    */
@@ -287,15 +296,62 @@ export class SessionManager {
       
       // Get turns - using getAll and filtering by sessionId
       const allTurns = await this.adapter.getAll('turns');
-      const turns = allTurns.filter(turn => turn.sessionId === sessionId);
-      const turnsArray = turns.map(turn => ({
-        id: turn.id,
-        type: turn.role,
-        text: turn.content,
-        threadId: turn.threadId,
-        createdAt: turn.createdAt,
-        updatedAt: turn.updatedAt
-      }));
+      const turns = allTurns
+        .filter(turn => turn.sessionId === sessionId)
+        .sort((a, b) => (a.sequence ?? a.createdAt) - (b.sequence ?? b.createdAt));
+
+      // Prepare a lookup for AI turn responses by aiTurnId
+      const allResponses = await this.adapter.getAll('provider_responses');
+      const responsesByTurn = new Map();
+      for (const resp of allResponses) {
+        if (resp.sessionId !== sessionId) continue;
+        const key = resp.aiTurnId;
+        if (!responsesByTurn.has(key)) {
+          responsesByTurn.set(key, { batch: {}, synthesis: {}, ensemble: {} });
+        }
+        const bucket = responsesByTurn.get(key);
+        const entry = {
+          providerId: resp.providerId,
+          text: resp.text || '',
+          status: resp.status || 'completed',
+          meta: resp.meta || {}
+        };
+        if (resp.responseType === 'batch') {
+          bucket.batch[resp.providerId] = entry;
+        } else if (resp.responseType === 'synthesis') {
+          const arr = bucket.synthesis[resp.providerId] || [];
+          arr.push(entry);
+          bucket.synthesis[resp.providerId] = arr;
+        } else if (resp.responseType === 'ensemble') {
+          const arr = bucket.ensemble[resp.providerId] || [];
+          arr.push(entry);
+          bucket.ensemble[resp.providerId] = arr;
+        }
+      }
+
+      const turnsArray = turns.map(turn => {
+        const base = {
+          id: turn.id,
+          text: turn.content,
+          threadId: turn.threadId,
+          createdAt: turn.createdAt,
+          updatedAt: turn.updatedAt
+        };
+        if (turn.type === 'user' || turn.role === 'user') {
+          return { ...base, type: 'user' };
+        } else {
+          // assistant/ai turn
+          const respBuckets = responsesByTurn.get(turn.id) || { batch: {}, synthesis: {}, ensemble: {} };
+          return {
+            ...base,
+            type: 'ai',
+            batchResponses: respBuckets.batch,
+            synthesisResponses: respBuckets.synthesis,
+            ensembleResponses: respBuckets.ensemble,
+            completedAt: turn.updatedAt
+          };
+        }
+      });
       
       // Get provider contexts - using getAll and filtering by sessionId
       const allContexts = await this.adapter.getAll('provider_contexts');
@@ -892,6 +948,25 @@ export class SessionManager {
   }
 
   /**
+   * Legacy turn saving that bypasses persistence adapter checks
+   * Used as fallback to prevent infinite recursion in error handling
+   */
+  saveTurnLegacy(sessionId, userTurn, aiTurn) {
+    const session = this.getOrCreateSessionLegacy(sessionId);
+    session.turns = session.turns || [];
+
+    if (userTurn) session.turns.push({ ...userTurn });
+    if (aiTurn) session.turns.push({ ...aiTurn });
+
+    session.lastActivity = Date.now();
+    if (!session.title && userTurn?.text) {
+      session.title = String(userTurn.text).slice(0, 50);
+    }
+
+    this.saveSessionLegacy(sessionId).catch(err => console.error(`Failed to save session ${sessionId}:`, err));
+  }
+
+  /**
    * Persist a complete user+AI turn and all provider responses
    */
   async saveTurnWithPersistence(sessionId, userTurn, aiTurn) {
@@ -976,9 +1051,9 @@ export class SessionManager {
           sequence: nextSequence,
           userTurnId: userTurn?.id,
           providerResponseIds,
-          batchResponseCount: (aiTurn.batchResponses && Object.values(aiTurn.batchResponses).flat().length) || 0,
-          synthesisResponseCount: (aiTurn.synthesisResponses && Object.values(aiTurn.synthesisResponses).flat().length) || 0,
-          ensembleResponseCount: (aiTurn.ensembleResponses && Object.values(aiTurn.ensembleResponses).flat().length) || 0
+          batchResponseCount: this.countResponses(aiTurn.batchResponses),
+          synthesisResponseCount: this.countResponses(aiTurn.synthesisResponses),
+          ensembleResponseCount: this.countResponses(aiTurn.ensembleResponses)
         };
         await this.adapter.put('turns', aiTurnRecord);
 
@@ -1002,8 +1077,8 @@ export class SessionManager {
       await this.saveSession(sessionId);
     } catch (error) {
       console.error(`[SessionManager] Failed to save turn with persistence:`, error);
-      // Fallback to legacy path
-      this.saveTurn(sessionId, userTurn, aiTurn);
+      // Fallback to legacy path (bypasses persistence checks to prevent recursion)
+      this.saveTurnLegacy(sessionId, userTurn, aiTurn);
     }
   }
 

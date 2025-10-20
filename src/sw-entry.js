@@ -241,7 +241,6 @@ class FaultTolerantOrchestrator {
         // If we have a provider-specific context, attempt a continuation.
         // Each adapter's sendContinuation will gracefully fall back to sendPrompt
         // when its required identifiers (e.g., conversationId/chatId/cursor) are missing.
-        const hasContext = !!providerContexts && !!providerContexts[providerId];
 
         const request = {
           originalPrompt: prompt,
@@ -510,6 +509,8 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
                     createdAt: Number(u.createdAt || Date.now())
                   },
                   providers,
+                  synthesisResponses: ai?.synthesisResponses || {},
+                  ensembleResponses: ai?.ensembleResponses || {},
                   completedAt: Number((ai && ai.createdAt) || (u.createdAt ? (Number(u.createdAt) + 1) : Date.now()))
                 });
               }

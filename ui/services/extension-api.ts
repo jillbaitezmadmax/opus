@@ -14,6 +14,7 @@ import {
 
 import type { HistorySessionSummary, HistoryApiResponse } from "../types";
 import type { ExecuteWorkflowRequest } from "../../shared/contract";
+import { PortHealthManager } from './port-health-manager';
 
 interface BackendApiResponse<T> {
   success: boolean;
@@ -30,7 +31,57 @@ let activeListener: ((message: any) => void) | null = null;
  * It primarily uses a single entry point `executeWorkflow` for all AI tasks
  * and `queryBackend` for simple request-response data fetching.
  */
-const api = {
+class ExtensionAPI {
+  private portHealthManager: PortHealthManager | null = null;
+  private connectionStateCallbacks: Set<(connected: boolean) => void> = new Set();
+  private sessionId: string | null = null;
+  private port: chrome.runtime.Port | null = null;
+  private portMessageHandler: ((message: any) => void) | null = null;
+
+  constructor() {
+    this.portHealthManager = new PortHealthManager('htos-popup', {
+      onHealthy: () => {
+        console.log('[ExtensionAPI] Connection restored');
+        this.notifyConnectionState(true);
+      },
+      onUnhealthy: () => {
+        console.warn('[ExtensionAPI] Connection lost');
+        this.notifyConnectionState(false);
+      },
+      onReconnect: () => {
+        console.log('[ExtensionAPI] Reconnected to service worker');
+        this.notifyConnectionState(true);
+      }
+    });
+  }
+  onConnectionStateChange(callback: (connected: boolean) => void): () => void {
+    this.connectionStateCallbacks.add(callback);
+    return () => this.connectionStateCallbacks.delete(callback);
+  }
+
+  private notifyConnectionState(connected: boolean) {
+    this.connectionStateCallbacks.forEach(cb => {
+      try {
+        cb(connected);
+      } catch (e) {
+        console.error('[ExtensionAPI] Connection state callback error:', e);
+      }
+    });
+  }
+
+  getConnectionStatus() {
+    return this.portHealthManager?.getStatus() || {
+      isConnected: !!this.port,
+      reconnectAttempts: 0,
+      lastPongTimestamp: 0,
+      timeSinceLastPong: Infinity
+    };
+  }
+
+  checkHealth() {
+    this.portHealthManager?.checkHealth();
+  }
+
   /**
    * Sets the extension ID. This must be called once on application startup.
    */
@@ -39,63 +90,67 @@ const api = {
       EXTENSION_ID = id;
       console.log("Extension API connected with ID:", EXTENSION_ID);
     }
-  },
+  }
 
   /**
    * Creates or retrieves a persistent port connection to the backend.
    * This is used for streaming workflow updates.
    */
-  ensurePort(options?: { sessionId?: string }): Promise<chrome.runtime.Port> {
-    return new Promise((resolve, reject) => {
-      if (!EXTENSION_ID) {
-        return reject(new Error("Extension not connected. Cannot create port."));
+  async ensurePort(options: { sessionId?: string; force?: boolean } = {}): Promise<chrome.runtime.Port> {
+    const { sessionId, force = false } = options;
+    
+    if (sessionId) {
+      this.sessionId = sessionId;
+    }
+
+    if (this.port && !force) {
+      const status = this.portHealthManager?.getStatus();
+      if (status?.isConnected) {
+        return this.port;
       }
+    }
 
-      // If port exists and is presumed connected, resolve immediately.
-      // The backend handles disconnects gracefully.
-      if (activePort) {
-        return resolve(activePort);
+    if (this.portHealthManager && this.portMessageHandler) {
+      this.port = this.portHealthManager.connect(
+        (message) => {
+          if (this.portMessageHandler) {
+            this.portMessageHandler(message);
+          }
+        },
+        () => {
+          console.warn('[ExtensionAPI] Port disconnected');
+          this.port = null;
+        }
+      );
+      
+      return this.port;
+    }
+
+    // Fallback
+    this.port = chrome.runtime.connect(EXTENSION_ID!, { name: 'htos-popup' });
+    
+    this.port.onMessage.addListener((message) => {
+      if (this.portMessageHandler) {
+        this.portMessageHandler(message);
       }
-
-      console.log("[API] Creating new persistent port...");
-      activePort = chrome.runtime.connect(EXTENSION_ID, { name: "htos-popup" });
-
-      activePort.onDisconnect.addListener(() => {
-        console.warn("[API] Port disconnected.");
-        activePort = null;
-        activeListener = null; // Clear listener on disconnect
-      });
-
-      // It's good practice to wait a moment for the connection to establish
-      setTimeout(() => resolve(activePort as chrome.runtime.Port), 50);
     });
-  },
+
+    this.port.onDisconnect.addListener(() => {
+      console.warn('[ExtensionAPI] Port disconnected (fallback mode)');
+      this.port = null;
+    });
+
+    return this.port;
+  }
 
   /**
    * Registers a single message handler for the active port. 
    * Replaces any existing handler.
    */
   setPortMessageHandler(handler: ((message: any) => void) | null): void {
-    this.ensurePort().then(port => {
-      // Remove the old listener if it exists
-      if (activeListener && port?.onMessage) {
-        try {
-          port.onMessage.removeListener(activeListener);
-        } catch (e) {
-          console.warn('[API] Failed to remove old port listener:', e);
-        }
-      }
-
-      // Add the new handler
-      if (handler && port?.onMessage) {
-        activeListener = handler;
-        port.onMessage.addListener(activeListener);
-        console.log("[API] Port message handler registered.");
-      } else {
-        activeListener = null;
-      }
-    });
-  },
+    this.portMessageHandler = handler;
+    console.log("[API] Port message handler registered.");
+  }
 
   /**
    * The primary method for executing all AI-related tasks.
@@ -104,27 +159,32 @@ const api = {
   async executeWorkflow(request: ExecuteWorkflowRequest): Promise<void> {
     const port = await this.ensurePort({ sessionId: request.sessionId });
     
-    // Send high-level request - backend will compile it
-    try {
-      const safeLog = {
-        mode: request.mode,
-        sessionId: request.sessionId,
-        threadId: request.threadId,
-        userMessagePreview: String(request.userMessage || '').substring(0, 120),
-        providers: request.providers,
-        synthesis: request.synthesis,
-        ensemble: request.ensemble,
-        useThinking: request.useThinking
-      };
-      console.log('[API] executeWorkflow payload:', safeLog);
-    } catch (_) {}
-
-    port.postMessage({
-      type: EXECUTE_WORKFLOW,
-      payload: request
+    this.portHealthManager?.checkHealth();
+    
+    return new Promise((resolve, reject) => {
+      try {
+        port.postMessage({
+          type: EXECUTE_WORKFLOW,
+          payload: request
+        });
+        resolve();
+      } catch (error) {
+        console.error('[ExtensionAPI] Failed to execute workflow:', error);
+        
+        this.ensurePort({ force: true }).then(() => {
+          try {
+            this.port?.postMessage({
+              type: EXECUTE_WORKFLOW,
+              payload: request
+            });
+            resolve();
+          } catch (retryError) {
+            reject(retryError);
+          }
+        }).catch(reject);
+      }
     });
-    console.log(`[API] Dispatched request mode: ${request.mode} for session: ${request.sessionId}`);
-  },
+  }
 
   /**
    * Sends a simple request-response message to the backend.
@@ -162,44 +222,45 @@ const api = {
         reject(new Error(`Extension communication error: ${err instanceof Error ? err.message : String(err)}`));
       }
     });
-  },
+  }
 
   // === DATA & SESSION METHODS ===
 
   getHistoryList(): Promise<HistoryApiResponse> {
     return this.queryBackend<HistoryApiResponse>({ type: GET_FULL_HISTORY });
-  },
+  }
 
   getHistorySession(sessionId: string): Promise<HistorySessionSummary> {
     return this.queryBackend<HistorySessionSummary>({ type: GET_HISTORY_SESSION, payload: { sessionId } });
-  },
+  }
 
   deleteBackgroundSession(sessionId: string): Promise<{ removed: boolean }> {
     return this.queryBackend<{ removed: boolean }>({ type: DELETE_SESSION, payload: { sessionId } });
-  },
+  }
 
   // Simple passthrough for session ID management in the backend
   // In the new model, the UI rarely needs to do this manually.
   // It's primarily handled via the workflow context.
   setSessionId(sessionId: string): void {
-  // The backend now gets the session ID with every workflow request,
-  // so this explicit sync message is no longer necessary.
-  console.log(`[API] setSessionId called for ${sessionId}, but sync is now implicit.`);
-  // this.ensurePort().then(port => {
-  //     port.postMessage({ type: 'sync_session', sessionId });
-  // });
-},
+    // The backend now gets the session ID with every workflow request,
+    // so this explicit sync message is no longer necessary.
+    console.log(`[API] setSessionId called for ${sessionId}, but sync is now implicit.`);
+    // this.ensurePort().then(port => {
+    //     port.postMessage({ type: 'sync_session', sessionId });
+    // });
+  }
 
   // The UI no longer manages context. These are now NO-OPs or deprecated.
   updateProviderContext(providerId: string, context: any): void {
     console.warn("`updateProviderContext` is deprecated. Context is managed by the backend.");
-  },
+  }
   
   clearSession(sessionId: string): void {
-      // This can be kept to signal a clear event to the backend if needed,
-      // but deleting the session is more explicit.
-      console.log(`Clearing UI-related state for session ${sessionId}`);
+    // This can be kept to signal a clear event to the backend if needed,
+    // but deleting the session is more explicit.
+    console.log(`Clearing UI-related state for session ${sessionId}`);
   }
-};
+}
 
+const api = new ExtensionAPI();
 export default api;

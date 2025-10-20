@@ -7,7 +7,8 @@ import { useLaneRailState } from './lanes/useLaneRailState';
 import { getProviderById } from '../providers/providerRegistry';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ProviderPill } from './ProviderPill';
-import { CodeBlockWrapper } from './CodeBlockWrapper';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // Legacy interface for backward compatibility
 interface ProviderState {
@@ -324,9 +325,11 @@ const ProviderResponseBlock = ({
                         {/* Expanded Full */}
                         {isExpanded && (
                           <div data-provider-chat style={{ maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
-                            <CodeBlockWrapper style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
-                              {String(state?.text || getStatusText(state?.status) || '')}
-                            </CodeBlockWrapper>
+                            <div className="prose prose-sm max-w-none dark:prose-invert" style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {String(state?.text || getStatusText(state?.status) || '')}
+                              </ReactMarkdown>
+                            </div>
                             {isStreaming && <span className="streaming-dots" />}
                           </div>
                         )}
@@ -378,9 +381,11 @@ const ProviderResponseBlock = ({
                   )}
                   {isExpanded && (
                     <div data-provider-chat style={{ maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px', flex: 1 }}>
-                      <CodeBlockWrapper style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
-                        {String(state?.text || getStatusText(state?.status) || '')}
-                      </CodeBlockWrapper>
+                      <div className="prose prose-sm max-w-none dark:prose-invert" style={{ fontSize: '13px', lineHeight: '1.5', color: '#e2e8f0' }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(state?.text || getStatusText(state?.status) || '')}
+                        </ReactMarkdown>
+                      </div>
                       {isStreaming && <span className="streaming-dots" />}
                     </div>
                   )}

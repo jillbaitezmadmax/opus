@@ -1,3 +1,65 @@
+
+
+Fix Markdown next-don’t sweat it, that’s a five-minute glow-up. Just pipe the raw text into a tiny parser before you hit Virtuoso. Use react-markdown; install that (npm i react-markdown remark-gfm), then inside your itemContent, instead of
+{msg.text}
+, do: {msg.text}. Boom-headings auto-size, bold turns real, lists get spacing, even emojis pop. No more notepad soup. Obsidian look? Add Tailwind: give the wrapper class like prose prose-sm max-w-none, and it’ll indent, add line-breaks, feel pro. If code blocks look flat, wrap in remark-gfm-it handles backticks with syntax colors out the box. Your whole feed jumps from notepad to Notion overnight. Want dark mode too? Throw dark:prose on there. Virtuoso won’t flinch-it’s just JSX underneath.
+
+
+
+use mcp context 7,Implement a high-performance chat UI using react-virtuoso to replace the existing virtualized list solution in StreamingBuffer . Follow these specific requirements:
+
+scan my codebase for the main chat component where messages are rendered in a list. Import { Virtuoso } from 'react-virtuoso' at the top. 
+
+Then wrap the whole scrollable list-y'know, where we loop through messages and show each one-instead of using a plain div with overflow, just replace it with a Virtuoso container. Feed it your messages array, make sure each message has a unique key like an ID, and turn on followOutput so it auto-scrolls to the bottom every time a new reply comes in. Don't bother with the old requestAnimationFrame tricks-just let Virtuoso breathe. 
+
+keep your existing styles on the container, like height and overflow hidden. Make sure messages is your state array from useState, with each item having a unique id. If we're streaming, update the array incrementally in your fetch hook, and add a ref to Virtuoso so you can call virtuosoRef.current?.scrollToIndex(messages.length - 1) right after a new chunk lands.
+
+Message state management requirements:
+
+- Maintain `messages` in useState with each item having a unique `id` property
+
+- Implement incremental updates to the array during streaming in your fetch hook
+
+- Create and utilize a `virtuosoRef` using useRef:
+
+```jsx
+
+const virtuosoRef = useRef(null);
+
+```
+
+- Call `virtuosoRef.current?.scrollToIndex(messages.length - 1)` after each new message chunk arrives
+
+4. Streaming behavior implementation:
+
+- Preserve smooth streaming animation with loading indicators
+
+- Ensure viewport follows the currently active stream (both synthesis and ensemble)
+
+- Maintain existing batch response hiding behavior for AI turn blocks
+
+- Implement auto-scroll to bottom when opening past sessions
+
+Performance optimizations:
+
+- Implement efficient memory management for large message histories
+
+- Preserve all existing UI styling and responsive behavior
+
+- Add production-grade optimizations:
+
+6. Edge case handling:
+
+- Ensure seamless transitions between different stream sources
+
+- Implement proper cleanup of resources in useEffect cleanup functions
+
+- Maintain accessibility standards (ARIA attributes, keyboard navigation)
+
+- Handle rapid message updates without performance degradation
+
+- Implement proper error boundaries and fallback UI
+
 Summary of Changes
 
 CompactModelTray (CompactModelTray.tsx):

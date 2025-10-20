@@ -88,7 +88,13 @@ const createInitialState = (existingState?: ComposerState): ComposerState => {
       {
         type: 'paragraph',
         children: [{ text: '' }],
-      },
+      }
+    ],
+    content: [
+      {
+        type: 'paragraph',
+        children: [{ text: '' }],
+      }
     ],
     sourceMap: {},
     refinementHistory: [],

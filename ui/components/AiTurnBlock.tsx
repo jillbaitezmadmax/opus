@@ -1,6 +1,7 @@
 import { AiTurn, ProviderResponse, AppStep } from '../types';
 import ProviderResponseBlock from './ProviderResponseBlock';
-import { CodeBlockWrapper } from './CodeBlockWrapper';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useMemo, useState } from 'react';
 import { hasComposableContent } from '../utils/composerUtils';
 import { LLM_PROVIDERS_CONFIG } from '../constants';
@@ -130,9 +131,11 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   return (
                     <div>
                       <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeSynthPid} · {take.status}</div>
-                      <CodeBlockWrapper style={{ lineHeight: 1.7, fontSize: 16 }}>
-                        {String(take.text || '')}
-                      </CodeBlockWrapper>
+                      <div className="prose prose-sm max-w-none dark:prose-invert" style={{ lineHeight: 1.7, fontSize: 16 }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(take.text || '')}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                   );
                 })()
@@ -170,9 +173,11 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   return (
                     <div>
                       <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeEnsemblePid} · {take.status}</div>
-                      <CodeBlockWrapper style={{ lineHeight: 1.7, fontSize: 16 }}>
-                        {String(take.text || '')}
-                      </CodeBlockWrapper>
+                      <div className="prose prose-sm max-w-none dark:prose-invert" style={{ lineHeight: 1.7, fontSize: 16 }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(take.text || '')}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                   );
                 })()

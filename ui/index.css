@@ -135,5 +135,10 @@ footer {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  -webkit-line-clamp: 3; /* You can adjust this value */
+  line-clamp: 3; /* You can adjust this value */
+}
+
+/* Connection status banner animation */
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

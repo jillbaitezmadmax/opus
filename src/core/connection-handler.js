@@ -22,6 +22,7 @@ export class ConnectionHandler {
     this.workflowEngine = null;
     this.messageHandler = null;
     this.isInitialized = false;
+    this.lifecycleManager = services.lifecycleManager;
   }
 
   /**
@@ -48,6 +49,9 @@ export class ConnectionHandler {
 
     this.isInitialized = true;
     console.log('[ConnectionHandler] Initialized for port:', this.port.name);
+    
+    // Signal that handler is ready
+    this.port.postMessage({ type: 'HANDLER_READY' });
   }
 
   /**
@@ -64,6 +68,13 @@ export class ConnectionHandler {
         switch (message.type) {
           case 'EXECUTE_WORKFLOW':
             await this._handleExecuteWorkflow(message);
+            break;
+
+          case 'KEEPALIVE_PING':
+            this.port.postMessage({ 
+              type: 'KEEPALIVE_PONG', 
+              timestamp: Date.now() 
+            });
             break;
 
           case 'reconnect':
@@ -93,11 +104,20 @@ export class ConnectionHandler {
   async _handleExecuteWorkflow(message) {
     const executeRequest = message.payload;
 
-    // Compile high-level request to detailed workflow
-    const workflowRequest = this.services.compiler.compile(executeRequest);
+    try {
+      // Activate lifecycle manager before workflow
+      this.lifecycleManager?.activateWorkflowMode();
 
-    // Execute via engine
-    await this.workflowEngine.execute(workflowRequest);
+      // Compile high-level request to detailed workflow
+      const workflowRequest = this.services.compiler.compile(executeRequest);
+
+      // Execute via engine
+      await this.workflowEngine.execute(workflowRequest);
+
+    } finally {
+      // Deactivate lifecycle manager after workflow
+      this.lifecycleManager?.deactivateWorkflowMode();
+    }
   }
 
   /**
@@ -128,6 +148,9 @@ export class ConnectionHandler {
   _cleanup() {
     console.log('[ConnectionHandler] Cleaning up connection');
 
+    // Deactivate lifecycle manager on disconnect
+    this.lifecycleManager?.deactivateWorkflowMode();
+
     // Remove message listener
     if (this.messageHandler) {
       try {
@@ -142,6 +165,7 @@ export class ConnectionHandler {
     this.messageHandler = null;
     this.port = null;
     this.services = null;
+    this.lifecycleManager = null;
     this.isInitialized = false;
   }
 }

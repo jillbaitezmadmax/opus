@@ -1,7 +1,8 @@
 import { UserTurn } from '../types';
 import { UserIcon, ChevronDownIcon, ChevronUpIcon } from './Icons';
 import { useState, useCallback } from 'react';
-import { CodeBlockWrapper } from './CodeBlockWrapper';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 
 const CopyButton = ({ text, label, onClick }: { text: string; label: string; onClick?: () => void }) => {
@@ -97,8 +98,8 @@ const UserTurnBlock = ({ userTurn, isExpanded, onToggle }: UserTurnBlockProps) =
 
         {isExpanded ? (
           <>
-            <CodeBlockWrapper
-              className="user-message"
+            <div
+              className="user-message prose prose-sm max-w-none dark:prose-invert"
               style={{
                 fontSize: '14px',
                 lineHeight: '1.5',
@@ -107,8 +108,10 @@ const UserTurnBlock = ({ userTurn, isExpanded, onToggle }: UserTurnBlockProps) =
                 marginBottom: '8px',
               }}
             >
-              {String(userTurn.text || '')}
-            </CodeBlockWrapper>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {String(userTurn.text || '')}
+              </ReactMarkdown>
+            </div>
             <div
               className="user-metadata"
               style={{
