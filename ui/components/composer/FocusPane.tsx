@@ -18,7 +18,7 @@ interface DraggableUnitProps {
     sessionId: string;
     aiTurnId: string;
     providerId: string;
-    responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+    responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
     responseIndex: number;
     textRange?: [number, number];
   };
@@ -123,7 +123,7 @@ const FocusPane: React.FC<FocusPaneProps> = ({ turn, granularity, sessionId, onA
             aiTurnId: turn.id,
             providerId: unit.providerId,
             responseType: source.type,
-            responseIndex: 0, // TODO: Extract from source ID if synthesis/ensemble
+            responseIndex: 0, // TODO: Extract from source ID if synthesis/mapping
             textRange: undefined
           }
         }))

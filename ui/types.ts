@@ -110,10 +110,10 @@ export interface AiTurn extends Omit<ContractAiTurn, 'type'> {
   hiddenBatchOutputs?: Record<string, ProviderResponse>;
   
   // DEPRECATED BUT KEPT FOR TRANSITION:
-  /** @deprecated Use `batchResponses`, `synthesisResponses`, or `ensembleResponses` instead. */
+  /** @deprecated Use `batchResponses`, `synthesisResponses`, or `mappingResponses` instead. */
   providerResponses?: Record<string, ProviderResponse>;
   isSynthesisAnswer?: boolean;
-  isEnsembleAnswer?: boolean;
+  isMappingAnswer?: boolean;
   isHidden?: boolean;
 }
 
@@ -185,7 +185,7 @@ export interface Provenance {
   sessionId: string;
   aiTurnId: string;
   providerId: string;
-  responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+  responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
   responseIndex: number;
   textRange?: [number, number];
 }
@@ -200,7 +200,7 @@ export interface DocumentRecord extends Omit<SchemaDocumentRecord, 'canvasConten
 export interface ContentSourceMap {
   [nodeId: string]: {
     providerId: string;
-    sourceType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+    sourceType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
     originalIndex: number;
     granularity: 'full' | 'paragraph' | 'sentence';
     text: string;
@@ -268,7 +268,7 @@ export interface GranularUnit {
 
 export interface ComposableSource {
   id: string;
-  type: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+  type: 'batch' | 'synthesis' | 'mapping' | 'hidden';
   providerId: string;
   content: string;
   status: ProviderResponseStatus;

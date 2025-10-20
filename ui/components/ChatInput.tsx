@@ -8,11 +8,11 @@ interface ChatInputProps {
   activeProviderCount: number;
   isVisibleMode: boolean;
   isContinuationMode: boolean;
-  // Ensemble-specific
-  onStartEnsemble?: (prompt: string) => void;
-  canShowEnsemble?: boolean; // ModelTray has >=2 selected and prompt has content
-  ensembleTooltip?: string;
-  ensembleActive?: boolean; // disable input and toggles while active
+  // Mapping-specific
+  onStartMapping?: (prompt: string) => void;
+  canShowMapping?: boolean; // ModelTray has >=2 selected and prompt has content
+  mappingTooltip?: string;
+  mappingActive?: boolean; // disable input and toggles while active
   onHeightChange?: (height: number) => void; // Callback for height changes
 }
 
@@ -24,10 +24,10 @@ const ChatInput = ({
   activeProviderCount,
   isVisibleMode,
   isContinuationMode,
-  onStartEnsemble,
-  canShowEnsemble = false,
-  ensembleTooltip,
-  ensembleActive = false,
+  onStartMapping,
+  canShowMapping = false,
+  mappingTooltip,
+  mappingActive = false,
   onHeightChange,
 }: ChatInputProps) => {
   const [prompt, setPrompt] = useState("");
@@ -63,8 +63,8 @@ const ChatInput = ({
   };
   
   const buttonText = isContinuationMode ? 'Continue' : 'Send';
-  const isDisabled = isLoading || ensembleActive || !prompt.trim();
-  const showEnsembleBtn = canShowEnsemble && !!prompt.trim();
+  const isDisabled = isLoading || mappingActive || !prompt.trim();
+  const showMappingBtn = canShowMapping && !!prompt.trim();
 
   // Status color for system pill
   const statusColor = isLoading ? '#f59e0b' : '#10b981';
@@ -174,24 +174,24 @@ const ChatInput = ({
           )}
         </button>
         
-        {/* Ensemble Button (ChatInput path) */}
-        {showEnsembleBtn && (
+        {/* Mapping Button (ChatInput path) */}
+        {showMappingBtn && (
           <button
             type="button"
-            onClick={() => { onStartEnsemble?.(prompt.trim()); setPrompt(""); }}
-            disabled={isLoading || ensembleActive}
-            title={ensembleTooltip || 'Ensemble with selected models'}
+            onClick={() => { onStartMapping?.(prompt.trim()); setPrompt(""); }}
+            disabled={isLoading || mappingActive}
+            title={mappingTooltip || 'Mapping with selected models'}
             style={{
               padding: '0px 12px', height: '38px',
               background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.12)',
               borderRadius: '16px', color: '#e2e8f0', fontWeight: 600, cursor: 'pointer',
               transition: isReducedMotion ? undefined : 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '8px',
               minWidth: '110px', justifyContent: 'center',
-              opacity: (isLoading || ensembleActive) ? 0.5 : 1
+              opacity: (isLoading || mappingActive) ? 0.5 : 1
             }}
           >
             <span style={{ fontSize: '16px' }}>🧩</span>
-            <span>Ensemble</span>
+            <span>Mapping</span>
           </button>
         )}
       </div>

@@ -27,7 +27,7 @@ export class WorkflowCompiler {
       providers,
       providerModes = {}, // Default to empty object for safety
       synthesis,
-      ensemble,
+      mapping,
       useThinking,
       historicalContext,
     } = request;
@@ -75,10 +75,10 @@ export class WorkflowCompiler {
       } catch (_) {}
     }
 
-    // Calculate latestUserTurnId once for both synthesis and ensemble steps
+    // Calculate latestUserTurnId once for both synthesis and mapping steps
     // If there is no batch step in this workflow and no explicit historical turn
     // provided by the UI, automatically source from the latest completed turn
-    // so synthesis/ensemble works on subsequent rounds without needing explicit UI context.
+    // so synthesis/mapping works on subsequent rounds without needing explicit UI context.
     const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
       ? this._getLatestUserTurnId(sessionId)
       : null;
@@ -130,18 +130,18 @@ export class WorkflowCompiler {
       });
     }
 
-    // STEP 3: Ensemble (one step per selected ensemble provider)
-    if (ensemble?.enabled && ensemble.providers.length > 0) {
-      ensemble.providers.forEach((provider) => {
-        const ensembleStepId = `ensemble-${provider}-${Date.now()}`;
+    // STEP 3: Mapping (one step per selected mapping provider)
+    if (mapping?.enabled && mapping.providers.length > 0) {
+      mapping.providers.forEach((provider) => {
+        const mappingStepId = `mapping-${provider}-${Date.now()}`;
         // ✅ RESPECTS providerModes override
         const providerMode = providerModes[provider] || mode;
 
-        const ensembleStep = {
-          stepId: ensembleStepId,
-          type: "ensemble",
+        const mappingStep = {
+          stepId: mappingStepId,
+          type: "mapping",
           payload: {
-            ensembleProvider: provider,
+            mappingProvider: provider,
             continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId)
               ? batchStepId
               : undefined,
@@ -166,12 +166,12 @@ export class WorkflowCompiler {
             attemptNumber: historicalContext?.attemptNumber || 1,
           },
         };
-        steps.push(ensembleStep);
+        steps.push(mappingStep);
         try {
-          console.log('[Compiler] Ensemble step', {
-            ensembleStepId,
+          console.log('[Compiler] Mapping step', {
+            mappingStepId,
             provider,
-            ...ensembleStep.payload
+            ...mappingStep.payload
           });
         } catch (_) {}
       });
@@ -296,18 +296,18 @@ export class WorkflowCompiler {
     const hasProviders = request.providers && request.providers.length > 0;
     const hasSynthesis =
       request.synthesis?.enabled && request.synthesis.providers?.length > 0;
-    const hasEnsemble =
-      request.ensemble?.enabled && request.ensemble.providers?.length > 0;
-    if (!hasProviders && !hasSynthesis && !hasEnsemble) {
+    const hasMapping =
+      request.mapping?.enabled && request.mapping.providers?.length > 0;
+    if (!hasProviders && !hasSynthesis && !hasMapping) {
       throw new Error(
-        "Request must specify at least one action: providers, synthesis, or ensemble."
+        "Request must specify at least one action: providers, synthesis, or mapping."
       );
     }
     const validProviders = ["claude", "gemini", "chatgpt", "qwen"];
     const allProviderIds = [
       ...(request.providers || []),
       ...(request.synthesis?.providers || []),
-      ...(request.ensemble?.providers || []),
+      ...(request.mapping?.providers || []),
       ...Object.keys(request.providerModes || {}),
     ];
     const invalid = allProviderIds.filter(

@@ -29,7 +29,7 @@ export const TurnMiniCard: React.FC<TurnMiniCardProps> = ({
         id: string;
         providerId: string;
         content: string;
-        type: 'batch' | 'synthesis' | 'ensemble';
+        type: 'batch' | 'synthesis' | 'mapping';
       }>;
   }, [turn]);
 
@@ -76,7 +76,7 @@ interface MiniBlockProps {
     id: string;
     providerId: string;
     content: string;
-    type: 'batch' | 'synthesis' | 'ensemble';
+    type: 'batch' | 'synthesis' | 'mapping';
   };
   isFocused: boolean;
   onDragStart: (data: any) => void;

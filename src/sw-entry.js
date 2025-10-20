@@ -510,7 +510,7 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
                   },
                   providers,
                   synthesisResponses: ai?.synthesisResponses || {},
-                  ensembleResponses: ai?.ensembleResponses || {},
+                  mappingResponses: ai?.mappingResponses || {},
                   completedAt: Number((ai && ai.createdAt) || (u.createdAt ? (Number(u.createdAt) + 1) : Date.now()))
                 });
               }

@@ -44,14 +44,14 @@ export const extractComposableContent = (aiTurn: AiTurn): ComposableSource[] => 
     }
   }
   
-  // 3. Extract ensemble responses (handles multiple "takes" per provider)
-  if (aiTurn.ensembleResponses) {
-    for (const [providerId, takes] of Object.entries(aiTurn.ensembleResponses)) {
+  // 3. Extract mapping responses (handles multiple "takes" per provider)
+  if (aiTurn.mappingResponses) {
+    for (const [providerId, takes] of Object.entries(aiTurn.mappingResponses)) {
       for (const [index, take] of takes.entries()) {
         if (take.text?.trim() && take.status === 'completed') {
           sources.push({
-            id: `ensemble-${providerId}-${index}-${uuid()}`,
-            type: 'ensemble',
+            id: `mapping-${providerId}-${index}-${uuid()}`,
+            type: 'mapping',
             providerId,
             content: take.text,
             status: take.status,
@@ -176,7 +176,7 @@ export const hasComposableContent = (aiTurn: AiTurn): boolean => {
 
   return hasCompleted(aiTurn.batchResponses) || 
          hasCompleted(aiTurn.synthesisResponses) ||
-         hasCompleted(aiTurn.ensembleResponses) ||
+         hasCompleted(aiTurn.mappingResponses) ||
          hasCompleted(aiTurn.hiddenBatchOutputs);
 };
 

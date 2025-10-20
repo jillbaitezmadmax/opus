@@ -12,11 +12,11 @@ interface CompactModelTrayProps {
   // Synthesis provider selection
   synthesisProvider?: string | null;
   onSetSynthesisProvider?: (providerId: string | null) => void;
-  // Ensemble controls
-  ensembleEnabled?: boolean;
-  onToggleEnsemble?: (enabled: boolean) => void;
-  ensembleProvider?: string | null;
-  onSetEnsembleProvider?: (providerId: string | null) => void;
+  // Mapping controls
+  mappingEnabled?: boolean;
+  onToggleMapping?: (enabled: boolean) => void;
+  mappingProvider?: string | null;
+  onSetMappingProvider?: (providerId: string | null) => void;
   // Power user mode
   powerUserMode?: boolean;
   synthesisProviders?: string[];
@@ -35,10 +35,10 @@ const CompactModelTray = ({
   onToggleThinkChatGPT, 
   synthesisProvider, 
   onSetSynthesisProvider,
-  ensembleEnabled = false,
-  onToggleEnsemble,
-  ensembleProvider,
-  onSetEnsembleProvider,
+  mappingEnabled = false,
+  onToggleMapping,
+  mappingProvider,
+  onSetMappingProvider,
   powerUserMode = false,
   synthesisProviders = [],
   onToggleSynthesisProvider,
@@ -57,9 +57,9 @@ const CompactModelTray = ({
   const selectedProviderIds = Object.keys(selectedModels).filter(id => selectedModels[id]);
   const selectedProviders = LLM_PROVIDERS_CONFIG.filter(provider => selectedProviderIds.includes(provider.id));
   const canRefine = activeCount >= 2;
-  const mapProviderId = ensembleProvider || '';
+  const mapProviderId = mappingProvider || '';
   const unifyProviderId = synthesisProvider || '';
-  const isMapEnabled = ensembleEnabled && !!mapProviderId;
+  const isMapEnabled = mappingEnabled && !!mapProviderId;
   const isUnifyEnabled = !!unifyProviderId;
   const hasRefine = isMapEnabled || isUnifyEnabled;
   
@@ -287,11 +287,11 @@ const CompactModelTray = ({
                       if (isDisabled || isLoading) return;
                       if (mapProviderId === provider.id) {
                         // Toggle off Map when clicking the already selected provider
-                        onSetEnsembleProvider?.(null);
-                        onToggleEnsemble?.(false);
+                        onSetMappingProvider?.(null);
+                        onToggleMapping?.(false);
                       } else {
-                        onSetEnsembleProvider?.(provider.id);
-                        onToggleEnsemble?.(true);
+                        onSetMappingProvider?.(provider.id);
+                        onToggleMapping?.(true);
                       }
                       setShowMapDropdown(false);
                     }}
@@ -621,7 +621,7 @@ const CompactModelTray = ({
             </div>
             
             <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-              {/* Map (Ensemble) */}
+              {/* Map (Mapping) */}
               <div style={{ opacity: canRefine ? 1 : 0.5 }}>
                 <label style={{ 
                   display: 'flex', 
@@ -633,7 +633,7 @@ const CompactModelTray = ({
                     <input
                       type="checkbox"
                       checked={isMapEnabled}
-                      onChange={(e) => !isLoading && onToggleEnsemble?.(e.target.checked)}
+                      onChange={(e) => !isLoading && onToggleMapping?.(e.target.checked)}
                       disabled={!canRefine || isLoading}
                       style={{
                         width: '14px',
@@ -647,7 +647,7 @@ const CompactModelTray = ({
                   </div>
                   <select
                     value={mapProviderId}
-                    onChange={(e) => onSetEnsembleProvider?.(e.target.value || null)}
+                    onChange={(e) => onSetMappingProvider?.(e.target.value || null)}
                     disabled={!isMapEnabled || !canRefine || isLoading}
                     style={{
                       background: 'rgba(255, 255, 255, 0.1)',
@@ -803,11 +803,11 @@ const CompactModelTray = ({
                     onToggleModel(provider.id);
                   }
                 });
-                onToggleEnsemble?.(true);
+                onToggleMapping?.(true);
                 const availableProviders = LLM_PROVIDERS_CONFIG.filter(p => selectedModels[p.id]); // After enabling all
                 if (availableProviders.length >= 2) {
                   // Pick first for map, second for unify (avoid same)
-                  onSetEnsembleProvider?.(availableProviders[0].id);
+                  onSetMappingProvider?.(availableProviders[0].id);
                   onSetSynthesisProvider?.(availableProviders[1]?.id || availableProviders[0].id);
                 }
                 setIsExpanded(false);

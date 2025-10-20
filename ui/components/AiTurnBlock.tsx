@@ -18,8 +18,8 @@ interface AiTurnBlockProps {
   onToggleSourceOutputs?: () => void;
   onEnterComposerMode?: (aiTurn: AiTurn) => void;
   activeSynthesisClipProviderId?: string;
-  activeEnsembleClipProviderId?: string;
-  onClipClick?: (type: 'synthesis' | 'ensemble', providerId: string) => void;
+  activeMappingClipProviderId?: string;
+  onClipClick?: (type: 'synthesis' | 'mapping', providerId: string) => void;
 }
 
 const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
@@ -31,11 +31,11 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
   isLoading = false,
   currentAppStep,
   activeSynthesisClipProviderId,
-  activeEnsembleClipProviderId,
+  activeMappingClipProviderId,
   onClipClick,
 }) => {
   const [isSynthesisExpanded, setIsSynthesisExpanded] = useState(true); // FIX: Add state for expand/collapse
-  const [isEnsembleExpanded, setIsEnsembleExpanded] = useState(true); // FIX: Add state for expand/collapse
+  const [isMappingExpanded, setIsMappingExpanded] = useState(true); // FIX: Add state for expand/collapse
   // Normalize responses
   const synthesisResponses = useMemo(() => {
     const map = aiTurn.synthesisResponses || {};
@@ -46,14 +46,14 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
     return out;
   }, [aiTurn.synthesisResponses]);
 
-  const ensembleResponses = useMemo(() => {
-    const map = aiTurn.ensembleResponses || {};
+  const mappingResponses = useMemo(() => {
+    const map = aiTurn.mappingResponses || {};
     const out: Record<string, ProviderResponse[]> = {};
     Object.entries(map as Record<string, any>).forEach(([pid, resp]) => {
       out[pid] = Array.isArray(resp) ? resp : [resp as ProviderResponse];
     });
     return out;
-  }, [aiTurn.ensembleResponses]);
+  }, [aiTurn.mappingResponses]);
 
   // Prepare source content (batch + hidden)
   const allSources = useMemo(() => {
@@ -93,7 +93,7 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
   };
 
   const activeSynthPid = computeActiveProvider(activeSynthesisClipProviderId, synthesisResponses);
-  const activeEnsemblePid = computeActiveProvider(activeEnsembleClipProviderId, ensembleResponses);
+  const activeMappingPid = computeActiveProvider(activeMappingClipProviderId, mappingResponses);
 
   const getLatestTake = (arr?: ProviderResponse[]): ProviderResponse | undefined => {
     if (!arr || arr.length === 0) return undefined;
@@ -147,32 +147,32 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
             )}
           </div>
 
-          {/* Ensemble Section (Second item in the horizontal row) */}
-          <div className="ensemble-section" style={{ border: '1px solid #475569', borderRadius: 8, padding: 12, flex: 1 }}>
+          {/* Mapping Section (Second item in the horizontal row) */}
+          <div className="mapping-section" style={{ border: '1px solid #475569', borderRadius: 8, padding: 12, flex: 1 }}>
             <div className="section-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>Ensemble</h4>
+              <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>Mapping</h4>
               {/* FIX: Add toggle button */}
-              <button onClick={() => setIsEnsembleExpanded(p => !p)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}>
-                {isEnsembleExpanded ? <ChevronUpIcon style={{width: 16, height: 16}} /> : <ChevronDownIcon style={{width: 16, height: 16}} />}
+              <button onClick={() => setIsMappingExpanded(p => !p)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}>
+                {isMappingExpanded ? <ChevronUpIcon style={{width: 16, height: 16}} /> : <ChevronDownIcon style={{width: 16, height: 16}} />}
               </button>
             </div>
             {/* FIX: Conditionally render content */}
-            {isEnsembleExpanded && (
+            {isMappingExpanded && (
                 <>
                   <ClipsCarousel
                     providers={LLM_PROVIDERS_CONFIG}
-                    responsesMap={ensembleResponses}
-                    activeProviderId={activeEnsemblePid}
-                    onClipClick={(pid) => onClipClick?.('ensemble', pid)}
+                    responsesMap={mappingResponses}
+                    activeProviderId={activeMappingPid}
+                    onClipClick={(pid) => onClipClick?.('mapping', pid)}
                   />
                   <div className="clip-content" style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
-              {activeEnsemblePid ? (
+              {activeMappingPid ? (
                 (() => {
-                  const take = getLatestTake(ensembleResponses[activeEnsemblePid]);
-                  if (!take) return <div style={{ color: '#64748b' }}>No ensemble yet for this model.</div>;
+                  const take = getLatestTake(mappingResponses[activeMappingPid]);
+                  if (!take) return <div style={{ color: '#64748b' }}>No mapping yet for this model.</div>;
                   return (
                     <div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeEnsemblePid} · {take.status}</div>
+                      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeMappingPid} · {take.status}</div>
                       <div className="prose prose-sm max-w-none dark:prose-invert" style={{ lineHeight: 1.7, fontSize: 16 }}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {String(take.text || '')}
@@ -182,7 +182,7 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   );
                 })()
               ) : (
-                <div style={{ color: '#64748b' }}>Choose a model to ensemble.</div>
+                <div style={{ color: '#64748b' }}>Choose a model to mapping.</div>
               )}
             </div>
                 </>

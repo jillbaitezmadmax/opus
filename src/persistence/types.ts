@@ -87,7 +87,7 @@ export interface AiTurnRecord extends BaseTurnRecord {
   // Response counts for quick access
   batchResponseCount: number;
   synthesisResponseCount: number;
-  ensembleResponseCount: number;
+  mappingResponseCount: number;
 }
 
 export type TurnRecord = UserTurnRecord | AiTurnRecord;
@@ -98,8 +98,8 @@ export interface ProviderResponseRecord {
   sessionId: string;               // Denormalized for efficient queries
   aiTurnId: string;
   providerId: string;              // 'claude' | 'gemini' | 'chatgpt' | 'qwen'
-  responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
-  responseIndex: number;           // 0 for batch, 0+ for synthesis/ensemble arrays
+  responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
+  responseIndex: number;           // 0 for batch, 0+ for synthesis/mapping arrays
   text: string;
   status: 'pending' | 'streaming' | 'completed' | 'error' | 'cancelled'; // ADDED: cancelled
   meta?: any;
@@ -179,7 +179,7 @@ export interface CanvasBlockRecord {
     sessionId: string;
     aiTurnId: string;
     providerId: string;
-    responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+    responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
     responseIndex: number;
     textRange?: [number, number];  // Character range if partial
   };
@@ -208,7 +208,7 @@ export interface GhostRecord {
     sessionId: string;
     aiTurnId: string;
     providerId: string;
-    responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+    responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
     responseIndex: number;
     textRange?: [number, number];
   };

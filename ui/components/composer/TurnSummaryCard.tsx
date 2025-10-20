@@ -20,7 +20,7 @@ const TurnSummaryCard: React.FC<TurnSummaryCardProps> = ({
   const providerIds = [
     ...Object.keys(aiTurn.batchResponses || {}),
     ...Object.keys(aiTurn.synthesisResponses || {}),
-    ...Object.keys(aiTurn.ensembleResponses || {})
+    ...Object.keys(aiTurn.mappingResponses || {})
   ];
   const uniqueProviders = [...new Set(providerIds)];
   

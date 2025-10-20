@@ -307,7 +307,7 @@ export class SessionManager {
         if (resp.sessionId !== sessionId) continue;
         const key = resp.aiTurnId;
         if (!responsesByTurn.has(key)) {
-          responsesByTurn.set(key, { batch: {}, synthesis: {}, ensemble: {} });
+          responsesByTurn.set(key, { batch: {}, synthesis: {}, mapping: {} });
         }
         const bucket = responsesByTurn.get(key);
         const entry = {
@@ -322,10 +322,10 @@ export class SessionManager {
           const arr = bucket.synthesis[resp.providerId] || [];
           arr.push(entry);
           bucket.synthesis[resp.providerId] = arr;
-        } else if (resp.responseType === 'ensemble') {
-          const arr = bucket.ensemble[resp.providerId] || [];
+        } else if (resp.responseType === 'mapping') {
+          const arr = bucket.mapping[resp.providerId] || [];
           arr.push(entry);
-          bucket.ensemble[resp.providerId] = arr;
+          bucket.mapping[resp.providerId] = arr;
         }
       }
 
@@ -341,13 +341,13 @@ export class SessionManager {
           return { ...base, type: 'user' };
         } else {
           // assistant/ai turn
-          const respBuckets = responsesByTurn.get(turn.id) || { batch: {}, synthesis: {}, ensemble: {} };
+          const respBuckets = responsesByTurn.get(turn.id) || { batch: {}, synthesis: {}, mapping: {} };
           return {
             ...base,
             type: 'ai',
             batchResponses: respBuckets.batch,
             synthesisResponses: respBuckets.synthesis,
-            ensembleResponses: respBuckets.ensemble,
+            mappingResponses: respBuckets.mapping,
             completedAt: turn.updatedAt
           };
         }
@@ -1037,7 +1037,7 @@ export class SessionManager {
 
         await persistResponses(aiTurn.batchResponses, 'batch');
         await persistResponses(aiTurn.synthesisResponses, 'synthesis');
-        await persistResponses(aiTurn.ensembleResponses, 'ensemble');
+        await persistResponses(aiTurn.mappingResponses, 'mapping');
 
         const aiTurnRecord = {
           id: aiTurnId,
@@ -1053,7 +1053,7 @@ export class SessionManager {
           providerResponseIds,
           batchResponseCount: this.countResponses(aiTurn.batchResponses),
           synthesisResponseCount: this.countResponses(aiTurn.synthesisResponses),
-          ensembleResponseCount: this.countResponses(aiTurn.ensembleResponses)
+          mappingResponseCount: this.countResponses(aiTurn.mappingResponses)
         };
         await this.adapter.put('turns', aiTurnRecord);
 

@@ -11,11 +11,11 @@ interface ModelTrayProps {
   // Synthesis provider selection
   synthesisProvider?: string | null;
   onSetSynthesisProvider?: (providerId: string | null) => void;
-  // Ensemble controls
-  ensembleEnabled?: boolean;
-  onToggleEnsemble?: (enabled: boolean) => void;
-  ensembleProvider?: string | null;
-  onSetEnsembleProvider?: (providerId: string | null) => void;
+  // Mapping controls
+  mappingEnabled?: boolean;
+  onToggleMapping?: (enabled: boolean) => void;
+  mappingProvider?: string | null;
+  onSetMappingProvider?: (providerId: string | null) => void;
   // Power user mode
   powerUserMode?: boolean;
   synthesisProviders?: string[];
@@ -30,10 +30,10 @@ const ModelTray = ({
   onToggleThinkChatGPT, 
   synthesisProvider, 
   onSetSynthesisProvider,
-  ensembleEnabled = false,
-  onToggleEnsemble,
-  ensembleProvider,
-  onSetEnsembleProvider,
+  mappingEnabled = false,
+  onToggleMapping,
+  mappingProvider,
+  onSetMappingProvider,
   powerUserMode = false,
   synthesisProviders = [],
   onToggleSynthesisProvider
@@ -219,7 +219,7 @@ const ModelTray = ({
             </div>
           </div>
 
-          {/* Right Column - Ensemble Controls */}
+          {/* Right Column - Mapping Controls */}
           <div style={{ flex: 1 }}>
             <div style={{ 
               fontSize: '12px', 
@@ -227,16 +227,16 @@ const ModelTray = ({
               fontWeight: 500, 
               marginBottom: '8px' 
             }}>
-              🔀 Ensemble
+              🔀 Mapping
             </div>
             
-            {/* Ensemble Enable Checkbox */}
+            {/* Mapping Enable Checkbox */}
             <div style={{ marginBottom: '8px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
-                  checked={ensembleEnabled}
-                  onChange={(e) => !isLoading && onToggleEnsemble?.(e.target.checked)}
+                  checked={mappingEnabled}
+                  onChange={(e) => !isLoading && onToggleMapping?.(e.target.checked)}
                   disabled={isLoading}
                   style={{
                     width: '14px',
@@ -245,31 +245,31 @@ const ModelTray = ({
                   }}
                 />
                 <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                  Enable Ensemble
+                  Enable Mapping
                 </span>
               </label>
             </div>
 
-            {/* Ensemble Provider Selection - Only show when enabled */}
-            {ensembleEnabled && (
+            {/* Mapping Provider Selection - Only show when enabled */}
+            {mappingEnabled && (
               <>
                 <div style={{ 
                   fontSize: '11px', 
                   color: '#94a3b8', 
                   marginBottom: '6px' 
                 }}>
-                  Ensemble Provider:
+                  Mapping Provider:
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {selectedProviders.map((provider) => {
-                    const isSelected = ensembleProvider === provider.id;
+                    const isSelected = mappingProvider === provider.id;
                     
                     return (
                       <button
                         key={provider.id}
                         onClick={() => {
                           if (isLoading) return;
-                          onSetEnsembleProvider?.(provider.id);
+                          onSetMappingProvider?.(provider.id);
                         }}
                         disabled={isLoading}
                         style={{

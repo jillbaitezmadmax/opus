@@ -306,7 +306,7 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
           userTurnId: aiTurn.userTurnId || '',
           batchResponseCount: aiTurn.batchResponseCount || 0,
           synthesisResponseCount: aiTurn.synthesisResponseCount || 0,
-          ensembleResponseCount: aiTurn.ensembleResponseCount || 0
+          mappingResponseCount: aiTurn.mappingResponseCount || 0
         } as AiTurnRecord;
       } else {
         throw new Error(`Invalid turn type: ${(turn as any).type}`);

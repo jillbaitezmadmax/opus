@@ -14,22 +14,22 @@ interface TurnActionBarProps {
   thinkSynthForChatGPT?: boolean;
   onToggleThinkSynthForChatGPT?: (roundUserTurnId: string) => void;
 
-  // Ensemble (single-select)
-  ensembleSelected: string | null;
-  onSelectEnsemble: (roundUserTurnId: string, providerId: string) => void;
-  onRunEnsemble: (roundUserTurnId: string) => void;
-  // Think-mode toggle for ChatGPT ensemble
-  thinkEnsembleForChatGPT?: boolean;
-  onToggleThinkEnsembleForChatGPT?: (roundUserTurnId: string) => void;
+  // Mapping (single-select)
+  mappingSelected: string | null;
+  onSelectMapping: (roundUserTurnId: string, providerId: string) => void;
+  onRunMapping: (roundUserTurnId: string) => void;
+  // Think-mode toggle for ChatGPT mapping
+  thinkMappingForChatGPT?: boolean;
+  onToggleThinkMappingForChatGPT?: (roundUserTurnId: string) => void;
 
   // Per-provider grey-out
   eligibleMap?: Record<string, { disabled: boolean; reason?: string }>;
-  // Ensemble-specific grey-out (separate from synthesis)
-  ensembleEligibleMap?: Record<string, { disabled: boolean; reason?: string }>;
+  // Mapping-specific grey-out (separate from synthesis)
+  mappingEligibleMap?: Record<string, { disabled: boolean; reason?: string }>;
 
   // Optional guards
   disableSynthesisRun?: boolean;
-  disableEnsembleRun?: boolean;
+  disableMappingRun?: boolean;
 }
 
 const TurnActionBar = ({
@@ -38,17 +38,17 @@ const TurnActionBar = ({
   synthSelected,
   onToggleSynth,
   onRunSynthesis,
-  ensembleSelected,
-  onSelectEnsemble,
-  onRunEnsemble,
+  mappingSelected,
+  onSelectMapping,
+  onRunMapping,
   eligibleMap = {},
-  ensembleEligibleMap = {},
+  mappingEligibleMap = {},
   disableSynthesisRun = false,
-  disableEnsembleRun = false,
+  disableMappingRun = false,
   thinkSynthForChatGPT = false,
   onToggleThinkSynthForChatGPT,
-  thinkEnsembleForChatGPT = false,
-  onToggleThinkEnsembleForChatGPT,
+  thinkMappingForChatGPT = false,
+  onToggleThinkMappingForChatGPT,
 }: TurnActionBarProps) => {
   const renderToggle = (
     pid: string,
@@ -148,34 +148,34 @@ const TurnActionBar = ({
         </div>
       )}
 
-      {/** Legacy "Ensemble with" controls temporarily disabled */}
+      {/** Legacy "Mapping with" controls temporarily disabled */}
       {false && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>Ensemble with:</span>
+          <span style={{ color: '#94a3b8', fontSize: 12 }}>Mapping with:</span>
           {LLM_PROVIDERS_CONFIG.map(p => {
-            const isSelected = ensembleSelected === p.id;
-            const block = ensembleEligibleMap[p.id];
+            const isSelected = mappingSelected === p.id;
+            const block = mappingEligibleMap[p.id];
             const isDisabled = !!block?.disabled;
-            const title = block?.reason ? `${p.name}: ${block.reason}` : `Choose ${p.name} to ensemble`;
+            const title = block?.reason ? `${p.name}: ${block.reason}` : `Choose ${p.name} to mapping`;
             return renderToggle(
               p.id,
               isSelected,
-              () => onSelectEnsemble(roundUserTurnId, p.id),
+              () => onSelectMapping(roundUserTurnId, p.id),
               isDisabled,
               title,
               '#10b981'
             );
           })}
-          {/* Think-mode toggle for ChatGPT ensemble */}
+          {/* Think-mode toggle for ChatGPT mapping */}
           <button
-            onClick={() => onToggleThinkEnsembleForChatGPT?.(roundUserTurnId)}
+            onClick={() => onToggleThinkMappingForChatGPT?.(roundUserTurnId)}
             disabled={isLoading}
-            title={`Think mode for ChatGPT ${thinkEnsembleForChatGPT ? 'ON' : 'OFF'}`}
+            title={`Think mode for ChatGPT ${thinkMappingForChatGPT ? 'ON' : 'OFF'}`}
             style={{
               padding: '6px 10px',
               borderRadius: 999,
               border: '1px solid #475569',
-              background: thinkEnsembleForChatGPT ? 'rgba(99,102,241,0.2)' : '#0f172a',
+              background: thinkMappingForChatGPT ? 'rgba(99,102,241,0.2)' : '#0f172a',
               color: '#e2e8f0',
               fontSize: 12,
               cursor: isLoading ? 'not-allowed' : 'pointer',
@@ -184,12 +184,12 @@ const TurnActionBar = ({
               gap: 6
             }}
           >
-            🤔 ChatGPT Think: {thinkEnsembleForChatGPT ? 'ON' : 'OFF'}
+            🤔 ChatGPT Think: {thinkMappingForChatGPT ? 'ON' : 'OFF'}
           </button>
           <div style={{ flex: 1 }} />
           <button
-            onClick={() => onRunEnsemble(roundUserTurnId)}
-            disabled={isLoading || !ensembleSelected || disableEnsembleRun}
+            onClick={() => onRunMapping(roundUserTurnId)}
+            disabled={isLoading || !mappingSelected || disableMappingRun}
             style={{
               padding: '6px 10px',
               borderRadius: 8,
@@ -197,10 +197,10 @@ const TurnActionBar = ({
               background: '#334155',
               color: '#e2e8f0',
               fontSize: 12,
-              cursor: (isLoading || !ensembleSelected || disableEnsembleRun) ? 'not-allowed' : 'pointer'
+              cursor: (isLoading || !mappingSelected || disableMappingRun) ? 'not-allowed' : 'pointer'
             }}
           >
-            🧩 Run Ensemble
+            🧩 Run Mapping
           </button>
         </div>
       )}

@@ -84,7 +84,7 @@ function useConnection(api: {
 import ComposerMode from './components/composer/ComposerMode';
 import { ProviderKey, ExecuteWorkflowRequest } from '../shared/contract';
 
-// buildEnsemblerPrompt has been moved to the backend (workflow-engine.js)
+// buildmappingPrompt has been moved to the backend (workflow-engine.js)
 
 const App = () => {
   // Single source of truth: all messages in one array
@@ -122,26 +122,26 @@ const App = () => {
   });
   const [synthesisProvider, setSynthesisProvider] = useState<string | null>('gemini');
   
-  // Ensemble state with smart defaults
-  const [ensembleEnabled, setEnsembleEnabled] = useState<boolean>(() => {
+  // Mapping state with smart defaults
+  const [mappingEnabled, setMappingEnabled] = useState<boolean>(() => {
     const hasUsed = localStorage.getItem('htos_has_used');
     if (!hasUsed) {
-      // First-time user: set flag and enable ensemble by default
+      // First-time user: set flag and enable mapping by default
       localStorage.setItem('htos_has_used', 'true');
       return true;
     }
     // Returning user: check saved preference
-    const saved = localStorage.getItem('htos_ensemble_enabled');
+    const saved = localStorage.getItem('htos_mapping_enabled');
     return saved ? JSON.parse(saved) : false;
   });
   
-  const [ensembleProvider, setEnsembleProvider] = useState<string | null>(() => {
-    const saved = localStorage.getItem('htos_ensemble_provider');
+  const [mappingProvider, setMappingProvider] = useState<string | null>(() => {
+    const saved = localStorage.getItem('htos_mapping_provider');
     return saved || 'chatgpt';
   });
   // Add to your state
 const [stepMetadata, setStepMetadata] = useState<Map<string, {
-  type: 'batch' | 'synthesis' | 'ensemble',
+  type: 'batch' | 'synthesis' | 'mapping',
   providerId: string,
   aiTurnId: string
 }>>(new Map());
@@ -168,13 +168,13 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
   
   // Round-level action bar selections
   const [synthSelectionsByRound, setSynthSelectionsByRound] = useState<Record<string, Record<string, boolean>>>({});
-  const [ensembleSelectionByRound, setEnsembleSelectionByRound] = useState<Record<string, string | null>>({});
+  const [mappingSelectionByRound, setMappingSelectionByRound] = useState<Record<string, string | null>>({});
   // Think toggles
   const [thinkOnChatGPT, setThinkOnChatGPT] = useState<boolean>(false);
   const [thinkSynthByRound, setThinkSynthByRound] = useState<Record<string, boolean>>({});
-  const [thinkEnsembleByRound, setThinkEnsembleByRound] = useState<Record<string, boolean>>({});
+  const [thinkMappingByRound, setThinkMappingByRound] = useState<Record<string, boolean>>({});
   // Historical Clips: active viewing selection per AiTurn
-  const [activeClips, setActiveClips] = useState<Record<string, { synthesis?: string; ensemble?: string }>>({});
+  const [activeClips, setActiveClips] = useState<Record<string, { synthesis?: string; mapping?: string }>>({});
   // Chat input height for dynamic positioning
   const [chatInputHeight, setChatInputHeight] = useState<number>(80);
   
@@ -203,13 +203,13 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  // Persistence effects for ensemble and power user mode settings
+  // Persistence effects for mapping and power user mode settings
   useEffect(() => {
-    localStorage.setItem('htos_ensemble_enabled', JSON.stringify(ensembleEnabled));
-    if (ensembleProvider) {
-      localStorage.setItem('htos_ensemble_provider', ensembleProvider);
+    localStorage.setItem('htos_mapping_enabled', JSON.stringify(mappingEnabled));
+    if (mappingProvider) {
+      localStorage.setItem('htos_mapping_provider', mappingProvider);
     }
-  }, [ensembleEnabled, ensembleProvider]);
+  }, [mappingEnabled, mappingProvider]);
 
   useEffect(() => {
     localStorage.setItem('htos_power_user_mode', JSON.stringify(powerUserMode));
@@ -219,22 +219,22 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
     localStorage.setItem('htos_synthesis_providers', JSON.stringify(synthesisProviders));
   }, [synthesisProviders]);
 
-  // Ensure Map (ensemble) and Unify (synthesis) use different providers
+  // Ensure Map (mapping) and Unify (synthesis) use different providers
   useEffect(() => {
-    if (ensembleEnabled && synthesisProvider && ensembleProvider === synthesisProvider) {
+    if (mappingEnabled && synthesisProvider && mappingProvider === synthesisProvider) {
       const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== synthesisProvider)?.id || null;
-      if (alternate !== ensembleProvider) {
-        setEnsembleProvider(alternate);
+      if (alternate !== mappingProvider) {
+        setMappingProvider(alternate);
         if (alternate) {
-          localStorage.setItem('htos_ensemble_provider', alternate);
+          localStorage.setItem('htos_mapping_provider', alternate);
         } else {
-          localStorage.removeItem('htos_ensemble_provider');
+          localStorage.removeItem('htos_mapping_provider');
         }
       }
     }
-  }, [ensembleEnabled, synthesisProvider, ensembleProvider, selectedModels]);
+  }, [mappingEnabled, synthesisProvider, mappingProvider, selectedModels]);
 
-  // Removed ambiguous helper getAllProviderResponses to prevent synthesis/ensemble from shadowing batch.
+  // Removed ambiguous helper getAllProviderResponses to prevent synthesis/mapping from shadowing batch.
 
   // ============================================================================
  // Abstract: Connection reducer for state hygiene—handles enums internally, exports boolean for API.
@@ -366,7 +366,7 @@ useEffect(() => {
       const allResponses: Record<string, ProviderResponse> = {
         ...(updatedAiTurn.batchResponses || {}),
         ...latestFromArrayMap(updatedAiTurn.synthesisResponses),
-        ...latestFromArrayMap(updatedAiTurn.ensembleResponses),
+        ...latestFromArrayMap(updatedAiTurn.mappingResponses),
         ...(updatedAiTurn.providerResponses || {}) // legacy
       };
       const allComplete = Object.values(allResponses).every(r => r.status === 'completed' || r.status === 'error');
@@ -374,9 +374,9 @@ useEffect(() => {
       if (allComplete) {
         setIsLoading(false);
         setUiPhase('awaiting_action');
-        const isEnsemble = updatedAiTurn.isEnsembleAnswer;
+        const isMapping = updatedAiTurn.isMappingAnswer;
         const isSynthesis = updatedAiTurn.isSynthesisAnswer;
-        setCurrentAppStep(isEnsemble || isSynthesis ? 'synthesisDone' : 'awaitingSynthesis');
+        setCurrentAppStep(isMapping || isSynthesis ? 'synthesisDone' : 'awaitingSynthesis');
         setIsContinuationMode(true);
         activeAiTurnIdRef.current = null;
         
@@ -427,8 +427,8 @@ useEffect(() => {
       // Completion check now looks at all possible response arrays
       const allBatch = Object.values(updatedAiTurn.batchResponses || {});
       const allSynth = Object.values(updatedAiTurn.synthesisResponses || {}).flat();
-      const allEnsemble = Object.values(updatedAiTurn.ensembleResponses || {}).flat();
-      const allResponses = [...allBatch, ...allSynth, ...allEnsemble];
+      const allMapping = Object.values(updatedAiTurn.mappingResponses || {}).flat();
+      const allResponses = [...allBatch, ...allSynth, ...allMapping];
 
       const allComplete = allResponses.length > 0 && allResponses.every(r => r.status === 'completed' || r.status === 'error');
 
@@ -470,11 +470,11 @@ useEffect(() => {
     userTurn: UserTurn,
     activeProviders: ProviderKey[],
     shouldUseSynthesis: boolean,
-    shouldUseEnsemble: boolean,
+    shouldUseMapping: boolean,
     synthesisProvider?: string,
-    ensembleProvider?: string
+    mappingProvider?: string
   ): AiTurn => {
-    if (shouldUseSynthesis || shouldUseEnsemble) {
+    if (shouldUseSynthesis || shouldUseMapping) {
       // ✅ Initialize batch responses for the batch step that runs first
       const pendingBatch: Record<string, ProviderResponse> = {};
       activeProviders.forEach(pid => {
@@ -486,7 +486,7 @@ useEffect(() => {
         };
       });
       
-      // Unified AI turn with synthesis and/or ensemble
+      // Unified AI turn with synthesis and/or mapping
       return {
         type: 'ai',
         id: aiTurnId,
@@ -504,9 +504,9 @@ useEffect(() => {
             createdAt: Date.now()
           }]
         } : {},
-        ensembleResponses: shouldUseEnsemble ? {
-          [ensembleProvider as string]: [{
-            providerId: ensembleProvider as ProviderKey,
+        mappingResponses: shouldUseMapping ? {
+          [mappingProvider as string]: [{
+            providerId: mappingProvider as ProviderKey,
             text: '',
             status: 'pending',
             createdAt: Date.now()
@@ -533,23 +533,23 @@ useEffect(() => {
         userTurnId: userTurn.id,
         batchResponses: pendingBatch,
         synthesisResponses: {},
-        ensembleResponses: {}
+        mappingResponses: {}
       };
     }
   }, [currentSessionId]);
 
-  // ===== Round helpers: locate round, existing synth/ensemble blocks, and insertion point =====
+  // ===== Round helpers: locate round, existing synth/mapping blocks, and insertion point =====
   const findRoundForUserTurn = useCallback((userTurnId: string) => {
     const userIndex = messages.findIndex(m => m.id === userTurnId);
     if (userIndex === -1) return null;
-    // Find first non-synthesis/non-ensemble AI turn after this user (provider outputs of this round)
+    // Find first non-synthesis/non-mapping AI turn after this user (provider outputs of this round)
     let aiIndex = -1;
     for (let i = userIndex + 1; i < messages.length; i++) {
       const t = messages[i];
       if (t.type === 'user') break; // next round begins
       if (t.type === 'ai') {
         const ai = t as AiTurn;
-        if (!ai.isSynthesisAnswer && !ai.isEnsembleAnswer) {
+        if (!ai.isSynthesisAnswer && !ai.isMappingAnswer) {
           aiIndex = i;
           break;
         }
@@ -564,18 +564,18 @@ useEffect(() => {
     const round = findRoundForUserTurn(userTurnId);
     if (!round) return -1;
     const { userIndex, aiIndex } = round;
-    // We want to insert after any existing synthesis/ensemble blocks for this round, but before main AI outputs
+    // We want to insert after any existing synthesis/mapping blocks for this round, but before main AI outputs
     let insertAt = userIndex + 1;
     for (let i = userIndex + 1; i < messages.length; i++) {
       const t = messages[i];
       if (t.type === 'user') break;
       if (t.type === 'ai') {
         const ai = t as AiTurn;
-        if ((ai.isSynthesisAnswer || ai.isEnsembleAnswer) && (ai.meta as any)?.synthForUserTurnId === userTurnId) {
-          insertAt = i + 1; // insert after the last synthesis/ensemble block of this round
+        if ((ai.isSynthesisAnswer || ai.isMappingAnswer) && (ai.meta as any)?.synthForUserTurnId === userTurnId) {
+          insertAt = i + 1; // insert after the last synthesis/mapping block of this round
           continue;
         }
-        // First non-synth/ensemble AI encountered: we must insert before it
+        // First non-synth/mapping AI encountered: we must insert before it
         break;
       }
     }
@@ -598,20 +598,20 @@ useEffect(() => {
 
   const buildEligibleMapForRound = useCallback((userTurnId: string): {
     synthMap: Record<string, { disabled: boolean; reason?: string }>;
-    ensembleMap: Record<string, { disabled: boolean; reason?: string }>;
+    mappingMap: Record<string, { disabled: boolean; reason?: string }>;
     disableSynthesisRun: boolean;
-    disableEnsembleRun: boolean;
+    disableMappingRun: boolean;
   } => {
     const round = findRoundForUserTurn(userTurnId);
-    if (!round) return { synthMap: {}, ensembleMap: {}, disableSynthesisRun: true, disableEnsembleRun: true };
+    if (!round) return { synthMap: {}, mappingMap: {}, disableSynthesisRun: true, disableMappingRun: true };
 
     const { aiIndex, ai } = round;
     const outputs = Object.values(ai?.providerResponses || {}).filter(r => r.status === 'completed' && r.text?.trim());
     const enoughOutputs = outputs.length >= 2;
 
-    // Check existing synthesis and ensemble responses in the unified AiTurn
+    // Check existing synthesis and mapping responses in the unified AiTurn
     const alreadySynthPids = ai?.synthesisResponses ? Object.keys(ai.synthesisResponses) : [];
-    const alreadyEnsemblePids = ai?.ensembleResponses ? Object.keys(ai.ensembleResponses) : [];
+    const alreadyMappingPids = ai?.mappingResponses ? Object.keys(ai.mappingResponses) : [];
 
     // Build eligibility map for Synthesis (multi-select)
     const synthMap: Record<string, { disabled: boolean; reason?: string }> = {};
@@ -629,39 +629,39 @@ useEffect(() => {
       }
     });
 
-    // Build eligibility map for Ensemble (single-select)
-    const ensembleMap: Record<string, { disabled: boolean; reason?: string }> = {};
+    // Build eligibility map for Mapping (single-select)
+    const mappingMap: Record<string, { disabled: boolean; reason?: string }> = {};
     LLM_PROVIDERS_CONFIG.forEach(p => {
       const contAfter = providerHasActivityAfter(p.id, aiIndex);
-      const alreadyEnsembled = alreadyEnsemblePids.includes(p.id);
+      const alreadyMappingd = alreadyMappingPids.includes(p.id);
       if (!enoughOutputs) {
-        ensembleMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
+        mappingMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
       } else if (contAfter) {
-        ensembleMap[p.id] = { disabled: true, reason: 'Provider continued after this round' };
-      } else if (alreadyEnsembled) {
-        ensembleMap[p.id] = { disabled: true, reason: 'Already ensembled for this round' };
+        mappingMap[p.id] = { disabled: true, reason: 'Provider continued after this round' };
+      } else if (alreadyMappingd) {
+        mappingMap[p.id] = { disabled: true, reason: 'Already mappingd for this round' };
       } else {
-        ensembleMap[p.id] = { disabled: false };
+        mappingMap[p.id] = { disabled: false };
       }
     });
 
     return {
       synthMap,
-      ensembleMap,
+      mappingMap,
       disableSynthesisRun: !enoughOutputs,
-      disableEnsembleRun: !enoughOutputs,
+      disableMappingRun: !enoughOutputs,
     };
   }, [findRoundForUserTurn, providerHasActivityAfter]);
 
-  // ===== Ensemble and synthesis provider handlers =====
-  const handleToggleEnsemble = useCallback((enabled: boolean) => {
-    setEnsembleEnabled(enabled);
+  // ===== Mapping and synthesis provider handlers =====
+  const handleToggleMapping = useCallback((enabled: boolean) => {
+    setMappingEnabled(enabled);
     // Immediate persistence to prevent stale state
-    localStorage.setItem('htos_ensemble_enabled', JSON.stringify(enabled));
+    localStorage.setItem('htos_mapping_enabled', JSON.stringify(enabled));
   }, []);
 
-  const handleSetEnsembleProvider = useCallback((providerId: string | null) => {
-    setEnsembleProvider(providerId);
+  const handleSetMappingProvider = useCallback((providerId: string | null) => {
+    setMappingProvider(providerId);
     // If the chosen Map provider matches Unify provider, auto-pick an alternate for Unify
     if (providerId && synthesisProvider === providerId) {
       const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== providerId)?.id || null;
@@ -674,9 +674,9 @@ useEffect(() => {
     }
     // Immediate persistence to prevent stale state
     if (providerId) {
-      localStorage.setItem('htos_ensemble_provider', providerId);
+      localStorage.setItem('htos_mapping_provider', providerId);
     } else {
-      localStorage.removeItem('htos_ensemble_provider');
+      localStorage.removeItem('htos_mapping_provider');
     }
   }, [synthesisProvider, selectedModels]);
 
@@ -700,8 +700,8 @@ useEffect(() => {
     });
   }, []);
 
-  const handleSelectEnsembleForRound = useCallback((userTurnId: string, providerId: string) => {
-    setEnsembleSelectionByRound(prev => {
+  const handleSelectMappingForRound = useCallback((userTurnId: string, providerId: string) => {
+    setMappingSelectionByRound(prev => {
       const current = prev[userTurnId] || null;
       return { ...prev, [userTurnId]: current === providerId ? null : providerId };
     });
@@ -779,10 +779,10 @@ useEffect(() => {
     }
   }, [currentSessionId, synthSelectionsByRound, uiTabId, findRoundForUserTurn, thinkSynthByRound, updateAiTurnById]);
 
-  // Build the Ensembler prompt using provided fixed template from spec
+  // Build the mapping prompt using provided fixed template from spec
   
 
-  const handleRunEnsembleForRound = useCallback(async (userTurnId: string, providerIdOverride?: string) => {
+  const handleRunMappingForRound = useCallback(async (userTurnId: string, providerIdOverride?: string) => {
     if (!currentSessionId) return;
 
     const roundInfo = findRoundForUserTurn(userTurnId);
@@ -796,38 +796,38 @@ useEffect(() => {
     });
     if (Object.keys(modelOutputs).length < 2) return;
 
-    const ensemblerProvider = providerIdOverride || ensembleSelectionByRound[userTurnId];
-    if (!ensemblerProvider) return;
+    const mappingProvider = providerIdOverride || mappingSelectionByRound[userTurnId];
+    if (!mappingProvider) return;
 
     setIsLoading(true);
     setUiPhase('streaming');
     setCurrentAppStep('synthesis');
 
     updateAiTurnById(roundAi.id, (prevAiTurn: AiTurn) => {
-      const prev = prevAiTurn.ensembleResponses || {};
+      const prev = prevAiTurn.mappingResponses || {};
       const next: Record<string, ProviderResponse[]> = { ...prev };
-      const pid = ensemblerProvider;
+      const pid = mappingProvider;
       const arr = Array.isArray(next[pid]) ? next[pid]! : [];
       arr.push({ providerId: pid, text: '', status: 'pending', createdAt: Date.now() });
       next[pid] = arr;
-      return { ...prevAiTurn, ensembleResponses: next };
+      return { ...prevAiTurn, mappingResponses: next };
     });
     
     activeAiTurnIdRef.current = roundAi.id;
 
     try {
-      // Unified request for rerun ensemble
+      // Unified request for rerun mapping
       const request: ExecuteWorkflowRequest = {
         sessionId: currentSessionId,
         threadId: 'default-thread',
         mode: 'continuation',
         userMessage: roundUser.text || '',
         providers: [],
-        ensemble: {
+        mapping: {
           enabled: true,
-          providers: [ensemblerProvider as ProviderKey]
+          providers: [mappingProvider as ProviderKey]
         },
-        useThinking: (ensemblerProvider === 'chatgpt') ? !!thinkEnsembleByRound[userTurnId] : false,
+        useThinking: (mappingProvider === 'chatgpt') ? !!thinkMappingByRound[userTurnId] : false,
         historicalContext: {
           userTurnId: userTurnId,
           sourceType: 'batch'
@@ -836,23 +836,23 @@ useEffect(() => {
 
       await api.executeWorkflow(request);
     } catch (err) {
-      console.error('Ensemble run failed:', err);
+      console.error('Mapping run failed:', err);
       setIsLoading(false);
       setUiPhase('awaiting_action');
       activeAiTurnIdRef.current = null;
     }
-  }, [currentSessionId, ensembleSelectionByRound, uiTabId, findRoundForUserTurn, thinkEnsembleByRound, updateAiTurnById]);
+  }, [currentSessionId, mappingSelectionByRound, uiTabId, findRoundForUserTurn, thinkMappingByRound, updateAiTurnById]);
 
-  // Historical Clips: handle clip click for synthesis/ensemble
-  const handleClipClick = useCallback((aiTurnId: string, type: 'synthesis' | 'ensemble', providerId: string) => {
+  // Historical Clips: handle clip click for synthesis/mapping
+  const handleClipClick = useCallback((aiTurnId: string, type: 'synthesis' | 'mapping', providerId: string) => {
     const aiTurn = messages.find((m: TurnMessage) => m.id === aiTurnId && m.type === 'ai') as AiTurn | undefined;
     if (!aiTurn) return;
 
-    const responsesMap = type === 'synthesis' ? (aiTurn.synthesisResponses || {}) : (aiTurn.ensembleResponses || {});
+    const responsesMap = type === 'synthesis' ? (aiTurn.synthesisResponses || {}) : (aiTurn.mappingResponses || {});
     const hasExisting = Array.isArray((responsesMap as any)[providerId]) ? ((responsesMap as any)[providerId] as ProviderResponse[]).length > 0 : !!(responsesMap as any)[providerId];
 
     // Update active view immediately
-    setActiveClips((prev: Record<string, { synthesis?: string; ensemble?: string }>) => ({
+    setActiveClips((prev: Record<string, { synthesis?: string; mapping?: string }>) => ({
       ...prev,
       [aiTurnId]: {
         ...(prev[aiTurnId] || {}),
@@ -872,9 +872,9 @@ useEffect(() => {
     if (type === 'synthesis') {
       void handleRunSynthesisForRound(userTurnId, providerId);
     } else {
-      void handleRunEnsembleForRound(userTurnId, providerId);
+      void handleRunMappingForRound(userTurnId, providerId);
     }
-  }, [messages, handleRunSynthesisForRound, handleRunEnsembleForRound]);
+  }, [messages, handleRunSynthesisForRound, handleRunMappingForRound]);
 
 
 
@@ -933,10 +933,10 @@ useEffect(() => {
     }
   }, []);
 
-  const getStepType = (stepId: string): 'batch' | 'synthesis' | 'ensemble' | null => {
+  const getStepType = (stepId: string): 'batch' | 'synthesis' | 'mapping' | null => {
     if (stepId.startsWith('batch-')) return 'batch';
     if (stepId.startsWith('synthesis-')) return 'synthesis';
-    if (stepId.startsWith('ensemble-')) return 'ensemble';
+    if (stepId.startsWith('mapping-')) return 'mapping';
     return null;
   };
 
@@ -947,7 +947,7 @@ useEffect(() => {
   const createPortMessageHandler = useCallback(() => {
     // Initialize a single persistent StreamingBuffer bound to the active AI turn
     if (!streamingBufferRef.current) {
-      streamingBufferRef.current = new StreamingBuffer((providerId: string, delta: string, status: string, responseType: 'batch' | 'synthesis' | 'ensemble') => {
+      streamingBufferRef.current = new StreamingBuffer((providerId: string, delta: string, status: string, responseType: 'batch' | 'synthesis' | 'mapping') => {
         const activeId = activeAiTurnIdRef.current;
         if (!activeId) return;
         updateAiTurnById(activeId, (turn: AiTurn) => {
@@ -979,15 +979,15 @@ useEffect(() => {
                 }
               };
             }
-            case 'ensemble': {
-              const existingResponses = turn.ensembleResponses?.[providerId] || [];
+            case 'mapping': {
+              const existingResponses = turn.mappingResponses?.[providerId] || [];
               const updatedResponses = existingResponses.length > 0
                 ? existingResponses.map((r, idx) => idx === 0 ? { ...r, text: r.text + delta, status: status as ProviderResponseStatus } : r)
                 : [{ providerId: providerId as ProviderKey, text: delta, status: status as ProviderResponseStatus, createdAt: Date.now() }];
               return {
                 ...turn,
-                ensembleResponses: {
-                  ...turn.ensembleResponses,
+                mappingResponses: {
+                  ...turn.mappingResponses,
                   [providerId]: updatedResponses
                 }
               };
@@ -1064,11 +1064,11 @@ useEffect(() => {
              const resultsMap = result.results || (result.providerId ? { [result.providerId]: result } : {});
              
              Object.entries(resultsMap).forEach(([providerId, data]: [string, any]) => {
-                 // Use includes() to match flexible stepId naming (e.g. 'ensemble-chatgpt-...')
-                 let responseType: 'batch' | 'synthesis' | 'ensemble' | 'unknown' = 'unknown';
+                 // Use includes() to match flexible stepId naming (e.g. 'mapping-chatgpt-...')
+                 let responseType: 'batch' | 'synthesis' | 'mapping' | 'unknown' = 'unknown';
                  if (typeof stepId === 'string') {
                    if (stepId.includes('synthesis')) responseType = 'synthesis';
-                   else if (stepId.includes('ensemble')) responseType = 'ensemble';
+                   else if (stepId.includes('mapping')) responseType = 'mapping';
                    else if (stepId.includes('batch') || stepId.includes('prompt')) responseType = 'batch';
                  }
 
@@ -1091,14 +1091,14 @@ useEffect(() => {
                      const updated = { ...base, text: (data.text || base.text || ''), status: 'completed' as const, updatedAt: Date.now() };
                      map[providerId] = [...takes.slice(0, -1), updated];
                      return { ...aiTurn, synthesisResponses: map };
-                   } else if (responseType === 'ensemble') {
-                     const map = { ...(aiTurn.ensembleResponses || {}) };
+                   } else if (responseType === 'mapping') {
+                     const map = { ...(aiTurn.mappingResponses || {}) };
                      const takes = map[providerId] || [];
                      const last = takes[takes.length - 1];
                      const base = last || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
                      const updated = { ...base, text: (data.text || base.text || ''), status: 'completed' as const, updatedAt: Date.now() };
                      map[providerId] = [...takes.slice(0, -1), updated];
-                     return { ...aiTurn, ensembleResponses: map };
+                     return { ...aiTurn, mappingResponses: map };
                    } else {
                      const map = { ...(aiTurn.batchResponses || {}) };
                      const existing = map[providerId] || { providerId, text: '', status: 'pending', createdAt: Date.now() } as ProviderResponse;
@@ -1297,11 +1297,11 @@ useEffect(() => {
     try {
       const shouldUseSynthesis = !!(synthesisProvider && activeProviders.length > 1);
       
-      // Calculate ensemble settings
-      const shouldUseEnsemble = !!(ensembleEnabled && 
-                               ensembleProvider && 
+      // Calculate mapping settings
+      const shouldUseMapping = !!(mappingEnabled && 
+                               mappingProvider && 
                                activeProviders.length > 1 && 
-                               activeProviders.includes(ensembleProvider as ProviderKey));
+                               activeProviders.includes(mappingProvider as ProviderKey));
       
       // Determine mode: only new-conversation when no session or first message
       const mode: 'new-conversation' | 'continuation' = (!currentSessionId || messages.length === 0) ? 'new-conversation' : 'continuation';
@@ -1319,9 +1319,9 @@ useEffect(() => {
           enabled: true,
           providers: [synthesisProvider as ProviderKey]
         } : undefined,
-        ensemble: shouldUseEnsemble ? {
+        mapping: shouldUseMapping ? {
           enabled: true,
-          providers: [ensembleProvider as ProviderKey]
+          providers: [mappingProvider as ProviderKey]
         } : undefined,
         useThinking: computeThinkFlag({ modeThinkButtonOn: thinkOnChatGPT, input: prompt })
        };
@@ -1332,9 +1332,9 @@ useEffect(() => {
         userTurn,
         activeProviders,
         shouldUseSynthesis,
-        shouldUseEnsemble,
+        shouldUseMapping,
         synthesisProvider || undefined,
-        ensembleProvider || undefined
+        mappingProvider || undefined
       );
       setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
 
@@ -1351,7 +1351,7 @@ useEffect(() => {
           return newMap;
         });
     }
-  }, [selectedModels, showWelcome, currentSessionId, uiTabId, thinkOnChatGPT, synthesisProvider, ensembleEnabled, ensembleProvider]);
+  }, [selectedModels, showWelcome, currentSessionId, uiTabId, thinkOnChatGPT, synthesisProvider, mappingEnabled, mappingProvider]);
 
   const handleContinuation = useCallback(async (prompt: string) => {
     const trimmed = prompt.trim();
@@ -1379,22 +1379,22 @@ useEffect(() => {
     setMessages((prev: TurnMessage[]) => [...prev, userTurn]);
     
     try {
-        // Determine synthesis/ensemble settings for continuation, same as initial send
+        // Determine synthesis/mapping settings for continuation, same as initial send
         const shouldUseSynthesis = !!(synthesisProvider && activeProviders.length > 1);
-        const shouldUseEnsemble = !!(ensembleEnabled &&
-                                  ensembleProvider &&
+        const shouldUseMapping = !!(mappingEnabled &&
+                                  mappingProvider &&
                                   activeProviders.length > 1 &&
-                                  activeProviders.includes(ensembleProvider as ProviderKey));
+                                  activeProviders.includes(mappingProvider as ProviderKey));
 
         // Debug: log gating and provider selections for continuation
         try {
           console.log('[UI] Continuation config', {
             activeProviders,
             synthesisProvider,
-            ensembleEnabled,
-            ensembleProvider,
+            mappingEnabled,
+            mappingProvider,
             shouldUseSynthesis,
-            shouldUseEnsemble,
+            shouldUseMapping,
             promptPreview: trimmed.substring(0, 120)
           });
         } catch (_) {}
@@ -1410,9 +1410,9 @@ useEffect(() => {
             enabled: true,
             providers: [synthesisProvider as ProviderKey]
           } : undefined,
-        ensemble: shouldUseEnsemble ? {
+        mapping: shouldUseMapping ? {
             enabled: true,
-            providers: [ensembleProvider as ProviderKey]
+            providers: [mappingProvider as ProviderKey]
           } : undefined,
           useThinking: computeThinkFlag({ modeThinkButtonOn: thinkOnChatGPT, input: trimmed })
         };
@@ -1423,9 +1423,9 @@ useEffect(() => {
           userTurn,
           activeProviders,
           shouldUseSynthesis,
-          shouldUseEnsemble,
+          shouldUseMapping,
           synthesisProvider || undefined,
-          ensembleProvider || undefined
+          mappingProvider || undefined
         );
         setMessages((prev: TurnMessage[]) => [...prev, aiTurn]);
 
@@ -1450,11 +1450,11 @@ useEffect(() => {
   }, [currentSessionId, messages, uiTabId]);
 
   // =========================================
-  // Simplified Ensemble: Single-Turn Action
+  // Simplified Mapping: Single-Turn Action
   // =========================================
 
-  // Deprecated global ensemble (replaced by per-round run)
-  const handleEnsembleTurn = useCallback(async () => { return; }, []);
+  // Deprecated global mapping (replaced by per-round run)
+  const handleMappingTurn = useCallback(async () => { return; }, []);
 
   const getSelectedModelIds = useCallback((): string[] => {
     return LLM_PROVIDERS_CONFIG.filter((p: LLMProvider) => selectedModels[p.id]).map(p => p.id);
@@ -1517,7 +1517,7 @@ useEffect(() => {
           userTurnId: userIdFromPayload,
           batchResponses: providerResponses,
           synthesisResponses: r.synthesisResponses || {},
-          ensembleResponses: r.ensembleResponses || {},
+          mappingResponses: r.mappingResponses || {},
           providerResponses // legacy kept as shorthand
         } as AiTurn;
         loadedMessages.push(aiTurn);
@@ -1592,7 +1592,7 @@ await api.ensurePort({ sessionId });
     const turn = messages[index];
 
     if (turn && isUserTurn(turn)) {
-      const { synthMap, ensembleMap, disableSynthesisRun, disableEnsembleRun } = buildEligibleMapForRound(turn.id);
+      const { synthMap, mappingMap, disableSynthesisRun, disableMappingRun } = buildEligibleMapForRound(turn.id);
       return (
         <div style={{ padding: '8px 0' }}>
           <UserTurnBlock
@@ -1609,10 +1609,10 @@ await api.ensurePort({ sessionId });
         {turn && isAiTurn(turn) ? (() => {
           const ai = turn as AiTurn;
 
-          // Compose ensemble output under the synthesis turn for layered rendering
+          // Compose mapping output under the synthesis turn for layered rendering
           let aiForRender: AiTurn = ai;
           if (ai.isSynthesisAnswer) {
-            // The synthesis turn already contains ensemble responses in the unified model
+            // The synthesis turn already contains mapping responses in the unified model
             aiForRender = ai; // No need to merge from separate turns
           }
 
@@ -1627,7 +1627,7 @@ await api.ensurePort({ sessionId });
               onToggleSourceOutputs={() => setShowSourceOutputs(prev => !prev)}
               onEnterComposerMode={handleEnterComposerMode}
               activeSynthesisClipProviderId={activeClips[aiForRender.id]?.synthesis}
-              activeEnsembleClipProviderId={activeClips[aiForRender.id]?.ensemble}
+              activeMappingClipProviderId={activeClips[aiForRender.id]?.mapping}
               onClipClick={(type, providerId) => handleClipClick(aiForRender.id, type, providerId)}
             />
           );
@@ -1645,13 +1645,13 @@ await api.ensurePort({ sessionId });
   const handleSetSynthesisProvider = (providerId: string | null) => {
     setSynthesisProvider(providerId);
     // If the chosen Unify provider matches Map provider, auto-pick an alternate for Map
-    if (providerId && ensembleProvider === providerId) {
+    if (providerId && mappingProvider === providerId) {
       const alternate = LLM_PROVIDERS_CONFIG.find(p => selectedModels[p.id] && p.id !== providerId)?.id || null;
-      setEnsembleProvider(alternate);
+      setMappingProvider(alternate);
       if (alternate) {
-        localStorage.setItem('htos_ensemble_provider', alternate);
+        localStorage.setItem('htos_mapping_provider', alternate);
       } else {
-        localStorage.removeItem('htos_ensemble_provider');
+        localStorage.removeItem('htos_mapping_provider');
       }
     }
     // Immediate persistence to prevent stale state
@@ -1874,10 +1874,10 @@ await api.ensurePort({ sessionId });
           onToggleThinkChatGPT={() => setThinkOnChatGPT(prev => !prev)}
           synthesisProvider={synthesisProvider}
           onSetSynthesisProvider={handleSetSynthesisProvider}
-          ensembleEnabled={ensembleEnabled}
-          onToggleEnsemble={handleToggleEnsemble}
-          ensembleProvider={ensembleProvider}
-          onSetEnsembleProvider={handleSetEnsembleProvider}
+          mappingEnabled={mappingEnabled}
+          onToggleMapping={handleToggleMapping}
+          mappingProvider={mappingProvider}
+          onSetMappingProvider={handleSetMappingProvider}
           powerUserMode={powerUserMode}
           synthesisProviders={synthesisProviders}
           onToggleSynthesisProvider={handleToggleSynthesisProvider}

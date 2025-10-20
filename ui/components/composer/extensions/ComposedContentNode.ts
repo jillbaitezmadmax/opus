@@ -5,7 +5,7 @@ export interface ProvenanceData {
   sessionId: string;
   aiTurnId: string;
   providerId: string;
-  responseType: "hidden" | "synthesis" | "batch" | "ensemble";
+  responseType: "hidden" | "synthesis" | "batch" | "mapping";
   responseIndex: number;
   timestamp: number;
   granularity: 'full' | 'paragraph' | 'sentence' | 'selection';

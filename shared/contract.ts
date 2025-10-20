@@ -2,7 +2,7 @@
 // CORE TYPES & ENUMS
 // ============================================================================
 export type ProviderKey = "claude" | "gemini" | "chatgpt" | "qwen";
-export type WorkflowStepType = "prompt" | "synthesis" | "ensemble";
+export type WorkflowStepType = "prompt" | "synthesis" | "mapping";
 export type WorkflowMode = "new-conversation" | "continuation";
 export type SynthesisStrategy = "continuation" | "fresh";
 
@@ -24,14 +24,14 @@ export interface ExecuteWorkflowRequest {
   // Multi-synthesis: Array of providers that each synthesize
   synthesis?: { enabled: boolean; providers: ProviderKey[] };
 
-  // Multi-ensemble: Array of providers that each ensemble
-  ensemble?: { enabled: boolean; providers: ProviderKey[] };
+  // Multi-mapping: Array of providers that each mapping
+  mapping?: { enabled: boolean; providers: ProviderKey[] };
 
   useThinking?: boolean;
 
   historicalContext?: {
     userTurnId?: string;
-    sourceType?: "batch" | "synthesis" | "ensemble";
+    sourceType?: "batch" | "synthesis" | "mapping";
     attemptNumber?: number;
     branchPointTurnId?: string;
     inheritContextUpTo?: string;
@@ -70,7 +70,7 @@ export interface SynthesisStepPayload {
   sourceStepIds?: string[];
   sourceHistorical?: {
     turnId: string;
-    responseType: "batch" | "synthesis" | "ensemble";
+    responseType: "batch" | "synthesis" | "mapping";
   };
   originalPrompt: string;
   useThinking?: boolean;
@@ -79,15 +79,15 @@ export interface SynthesisStepPayload {
 }
 
 // NOTE: Added Omit<...> to reduce duplication, but the effective type is the same.
-export interface EnsembleStepPayload
+export interface MappingStepPayload
   extends Omit<SynthesisStepPayload, "synthesisProvider"> {
-  ensembleProvider: ProviderKey;
+  mappingProvider: ProviderKey;
 }
 
 export interface WorkflowStep {
   stepId: string;
   type: WorkflowStepType;
-  payload: PromptStepPayload | SynthesisStepPayload | EnsembleStepPayload;
+  payload: PromptStepPayload | SynthesisStepPayload | MappingStepPayload;
 }
 
 export interface WorkflowContext {
@@ -132,7 +132,7 @@ export interface WorkflowStepUpdateMessage {
   result?: {
     // For batch prompt steps, this will be populated
     results?: Record<string, ProviderResponse>;
-    // For single-provider steps (synthesis/ensemble), these will be populated
+    // For single-provider steps (synthesis/mapping), these will be populated
     providerId?: string;
     text?: string;
     status?: string;
@@ -187,7 +187,7 @@ export interface AiTurn {
   createdAt: number;
   batchResponses: Record<string, ProviderResponse>;
   synthesisResponses: Record<string, ProviderResponse[]>;
-  ensembleResponses: Record<string, ProviderResponse[]>;
+  mappingResponses: Record<string, ProviderResponse[]>;
   meta?: {
     branchPointTurnId?: string;
     replacesId?: string;
@@ -221,8 +221,8 @@ export function isSynthesisPayload(
 ): payload is SynthesisStepPayload {
   return "synthesisProvider" in payload;
 }
-export function isEnsemblePayload(
+export function isMappingPayload(
   payload: any
-): payload is EnsembleStepPayload {
-  return "ensembleProvider" in payload;
+): payload is MappingStepPayload {
+  return "mappingProvider" in payload;
 }

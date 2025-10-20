@@ -163,7 +163,7 @@ class EnhancedDocumentStore {
       sessionId: string;
       aiTurnId: string;
       providerId: string;
-      responseType: 'batch' | 'synthesis' | 'ensemble' | 'hidden';
+      responseType: 'batch' | 'synthesis' | 'mapping' | 'hidden';
       responseIndex: number;
       textRange?: [number, number];
     }

@@ -6,7 +6,7 @@
  * and apply them once per frame, right before the browser paints.
  */
 
-type ResponseType = 'batch' | 'synthesis' | 'ensemble';
+type ResponseType = 'batch' | 'synthesis' | 'mapping';
 type UpdateCallback = (providerId: string, text: string, status: string, responseType: ResponseType) => void;
 
 interface BufferedUpdate {

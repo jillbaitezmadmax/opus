@@ -40,7 +40,7 @@ Write directly to answer the query—no meta-commentary, no attribution.
 Begin`;
 }
 
-function buildEnsemblerPrompt(userPrompt, sourceResults) {
+function buildMappingPrompt(userPrompt, sourceResults) {
   const modelOutputsBlock = sourceResults
     .map(res => `=== ${String(res.providerId).toUpperCase()} ===\n${String(res.text)}`)
     .join('\n\n');
@@ -215,7 +215,7 @@ export class WorkflowEngine {
     try {
       const promptSteps = steps.filter(step => step.type === 'prompt');
     const synthesisSteps = steps.filter(step => step.type === 'synthesis');
-    const ensembleSteps = steps.filter(step => step.type === 'ensemble');
+    const mappingSteps = steps.filter(step => step.type === 'mapping');
 
         // 1. Execute all batch prompt steps first, as they are dependencies.
     for (const step of promptSteps) {
@@ -225,7 +225,7 @@ export class WorkflowEngine {
             this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'completed', result });
 
             // Cache provider contexts from this batch step into workflowContexts so
-            // subsequent synthesis/ensemble steps in the same workflow can continue
+            // subsequent synthesis/mapping steps in the same workflow can continue
             // the freshly-created conversations immediately.
             try {
               const resultsObj = result && result.results ? result.results : {};
@@ -246,8 +246,8 @@ export class WorkflowEngine {
         }
     }
 
-        // 2. Now, execute synthesis and ensemble steps in parallel.
-    const parallelSteps = [...synthesisSteps, ...ensembleSteps];
+        // 2. Now, execute synthesis and mapping steps in parallel.
+    const parallelSteps = [...synthesisSteps, ...mappingSteps];
     if (parallelSteps.length > 0) {
         const parallelPromises = parallelSteps.map(async (step) => {
             try {
@@ -256,8 +256,8 @@ export class WorkflowEngine {
                      case 'synthesis':
                          result = await this.executeSynthesisStep(step, context, stepResults, workflowContexts);
                          break;
-                     case 'ensemble':
-                         result = await this.executeEnsembleStep(step, context, stepResults, workflowContexts);
+                     case 'mapping':
+                         result = await this.executeMappingStep(step, context, stepResults, workflowContexts);
                          break;
                  }
                  stepResults.set(step.stepId, { status: 'completed', result });
@@ -312,7 +312,7 @@ export class WorkflowEngine {
     // Collect AI results
     const batchResponses = {};
     const synthesisResponses = {};
-    const ensembleResponses = {};
+    const mappingResponses = {};
 
     const stepById = new Map((steps || []).map(s => [s.stepId, s]));
     stepResults.forEach((value, stepId) => {
@@ -345,7 +345,7 @@ export class WorkflowEngine {
           synthesisResponses[providerId].push(entry);
           break;
         }
-        case 'ensemble': {
+        case 'mapping': {
           const providerId = result?.providerId;
           if (!providerId) return;
           const entry = {
@@ -354,14 +354,14 @@ export class WorkflowEngine {
             status: result?.status || 'completed',
             meta: result?.meta || {}
           };
-          if (!ensembleResponses[providerId]) ensembleResponses[providerId] = [];
-          ensembleResponses[providerId].push(entry);
+          if (!mappingResponses[providerId]) mappingResponses[providerId] = [];
+          mappingResponses[providerId].push(entry);
           break;
         }
       }
     });
 
-    const hasData = Object.keys(batchResponses).length > 0 || Object.keys(synthesisResponses).length > 0 || Object.keys(ensembleResponses).length > 0;
+    const hasData = Object.keys(batchResponses).length > 0 || Object.keys(synthesisResponses).length > 0 || Object.keys(mappingResponses).length > 0;
     if (!hasData) return; // Nothing to persist
 
     // Build AiTurn
@@ -372,7 +372,7 @@ export class WorkflowEngine {
       userTurnId: userTurn.id,
       batchResponses,
       synthesisResponses,
-      ensembleResponses
+      mappingResponses
     };
 
     this.sessionManager.saveTurn(context.sessionId, userTurn, aiTurn);
@@ -576,8 +576,8 @@ export class WorkflowEngine {
         case 'synthesis': 
           sourceContainer = aiTurn.synthesisResponses || {}; 
           break;
-        case 'ensemble': 
-          sourceContainer = aiTurn.ensembleResponses || {}; 
+        case 'mapping': 
+          sourceContainer = aiTurn.mappingResponses || {}; 
           break;
         default: 
           sourceContainer = aiTurn.batchResponses || {}; 
@@ -733,33 +733,33 @@ export class WorkflowEngine {
   }
 
   /**
-   * Execute ensemble step - FIXED
+   * Execute mapping step - FIXED
    */
-  async executeEnsembleStep(step, context, previousResults, workflowContexts = {}) {
+  async executeMappingStep(step, context, previousResults, workflowContexts = {}) {
     const payload = step.payload;
     const sourceData = await this.resolveSourceData(payload, context, previousResults);
     
     if (sourceData.length === 0) {
-      throw new Error("No valid sources for ensemble. All providers returned empty or failed responses.");
+      throw new Error("No valid sources for mapping. All providers returned empty or failed responses.");
     }
 
-    console.log(`[WorkflowEngine] Running ensemble with ${sourceData.length} sources:`, 
+    console.log(`[WorkflowEngine] Running mapping with ${sourceData.length} sources:`, 
       sourceData.map(s => s.providerId).join(', '));
 
-    const ensemblePrompt = buildEnsemblerPrompt(payload.originalPrompt, sourceData);
+    const mappingPrompt = buildMappingPrompt(payload.originalPrompt, sourceData);
 
     // Resolve provider context using three-tier resolution
     const providerContexts = this._resolveProviderContext(
-      payload.ensembleProvider, 
+      payload.mappingProvider, 
       context, 
       payload, 
       workflowContexts, 
       previousResults, 
-      'Ensemble'
+      'Mapping'
     );
 
     return new Promise((resolve, reject) => {
-      this.orchestrator.executeParallelFanout(ensemblePrompt, [payload.ensembleProvider], {
+      this.orchestrator.executeParallelFanout(mappingPrompt, [payload.mappingProvider], {
         sessionId: context.sessionId,
         useThinking: payload.useThinking,
         providerContexts: Object.keys(providerContexts).length ? providerContexts : undefined,
@@ -774,35 +774,35 @@ export class WorkflowEngine {
       providerId, 
       chunk: { text: delta } 
     });
-    logger.stream('Ensemble delta:', { stepId: step.stepId, providerId, len: delta.length });
+    logger.stream('Mapping delta:', { stepId: step.stepId, providerId, len: delta.length });
   }
 },
         onAllComplete: (results) => {
-          const finalResult = results.get(payload.ensembleProvider);
+          const finalResult = results.get(payload.mappingProvider);
           
-          // ✅ Ensure final emission for ensemble
+          // ✅ Ensure final emission for mapping
           if (finalResult?.text) {
-            const delta = makeDelta(context.sessionId, payload.ensembleProvider, finalResult.text);
+            const delta = makeDelta(context.sessionId, payload.mappingProvider, finalResult.text);
             if (delta && delta.length > 0) {
               this.port.postMessage({  
                 type: 'PARTIAL_RESULT',  
                 sessionId: context.sessionId,  
                 stepId: step.stepId,  
-                providerId: payload.ensembleProvider,  
+                providerId: payload.mappingProvider,  
                 chunk: { text: delta, isFinal: true }  
               }); 
-              logger.stream('Final ensemble emission:', { providerId: payload.ensembleProvider, len: delta.length }); 
+              logger.stream('Final mapping emission:', { providerId: payload.mappingProvider, len: delta.length }); 
             } 
           }
           
           if (!finalResult || !finalResult.text) {
-            reject(new Error(`Ensemble provider ${payload.ensembleProvider} returned empty response`));
+            reject(new Error(`Mapping provider ${payload.mappingProvider} returned empty response`));
             return;
           }
 
           this.sessionManager.updateProviderContext(
             context.sessionId, 
-            payload.ensembleProvider, 
+            payload.mappingProvider, 
             finalResult, 
             true, 
             { skipSave: true }
@@ -811,13 +811,13 @@ export class WorkflowEngine {
           // Update workflow-cached context for subsequent steps in the same workflow
           try {
             if (finalResult?.meta) {
-              workflowContexts[payload.ensembleProvider] = finalResult.meta;
-              console.log(`[WorkflowEngine] Updated workflow context for ${payload.ensembleProvider}: ${Object.keys(finalResult.meta).join(',')}`);
+              workflowContexts[payload.mappingProvider] = finalResult.meta;
+              console.log(`[WorkflowEngine] Updated workflow context for ${payload.mappingProvider}: ${Object.keys(finalResult.meta).join(',')}`);
             }
           } catch (_) {}
           
           resolve({
-            providerId: payload.ensembleProvider,
+            providerId: payload.mappingProvider,
             text: finalResult.text, // ✅ Return text explicitly
             status: 'completed',
             meta: finalResult.meta || {}

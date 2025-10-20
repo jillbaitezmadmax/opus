@@ -62,13 +62,13 @@ export const convertTurnMessageToChatTurn = (turn: TurnMessage): ChatTurn => {
       });
     });
     
-    // Convert ensemble responses
-    Object.entries(aiTurn.ensembleResponses || {}).forEach(([providerId, responseArray]) => {
+    // Convert mapping responses
+    Object.entries(aiTurn.mappingResponses || {}).forEach(([providerId, responseArray]) => {
       responseArray.forEach((response, index) => {
         responses.push({
-          id: `${aiTurn.id}-ensemble-${providerId}-${index}`,
+          id: `${aiTurn.id}-mapping-${providerId}-${index}`,
           content: response.text,
-          providerId: `${providerId}-ensemble`,
+          providerId: `${providerId}-mapping`,
           status: response.status,
           createdAt: response.createdAt,
           meta: response.meta
@@ -111,8 +111,8 @@ export const getPrimaryResponseContent = (turn: ChatTurn): string => {
     return turn.content;
   }
   
-  // For AI turns, prefer batch responses, then synthesis, then ensemble
-  const batchResponse = turn.responses.find(r => !r.providerId.includes('-synthesis') && !r.providerId.includes('-ensemble'));
+  // For AI turns, prefer batch responses, then synthesis, then mapping
+  const batchResponse = turn.responses.find(r => !r.providerId.includes('-synthesis') && !r.providerId.includes('-mapping'));
   if (batchResponse) {
     return batchResponse.content;
   }
@@ -132,5 +132,5 @@ export const getResponseByProvider = (turn: ChatTurn, providerId: string): Respo
 
 // Helper to get all providers for a turn
 export const getTurnProviders = (turn: ChatTurn): string[] => {
-  return Array.from(new Set(turn.responses.map(r => r.providerId.replace('-synthesis', '').replace('-ensemble', ''))));
+  return Array.from(new Set(turn.responses.map(r => r.providerId.replace('-synthesis', '').replace('-mapping', ''))));
 };
