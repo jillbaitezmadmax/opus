@@ -76,6 +76,7 @@ const CompactModelTray = ({
   
   // Handle outside clicks for closing expanded and dropdowns
   useEffect(() => {
+    const shouldListen = isExpanded || showModelsDropdown || showMapDropdown || showUnifyDropdown;
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsExpanded(false);
@@ -84,11 +85,11 @@ const CompactModelTray = ({
         setShowUnifyDropdown(false);
       }
     };
-    if (isExpanded) {
+    if (shouldListen) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [isExpanded]);
+  }, [isExpanded, showModelsDropdown, showMapDropdown, showUnifyDropdown]);
 
   // First load state - show full description
   if (isFirstLoad) {
@@ -194,7 +195,15 @@ const CompactModelTray = ({
           }}
         >
           {/* Models Label with Dropdown Arrow */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }} onClick={() => setShowModelsDropdown(!showModelsDropdown)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }} onClick={() => {
+            const opening = !showModelsDropdown;
+            setShowModelsDropdown(opening);
+            if (opening) {
+              // ensure only one dropdown is open at a time
+              setShowMapDropdown(false);
+              setShowUnifyDropdown(false);
+            }
+          }}>
             <span>{getWitnessLabel()}</span>
             <span style={{ fontSize: '10px', color: '#94a3b8' }}>▼</span>
           </div>
@@ -256,7 +265,14 @@ const CompactModelTray = ({
           <span style={{ color: '#64748b' }}>•</span>
 
           {/* Map Label with Dropdown Arrow */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: canRefine ? 'pointer' : 'default', opacity: canRefine ? 1 : 0.5 }} onClick={canRefine ? () => setShowMapDropdown(!showMapDropdown) : undefined}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: canRefine ? 'pointer' : 'default', opacity: canRefine ? 1 : 0.5 }} onClick={canRefine ? () => {
+            const opening = !showMapDropdown;
+            setShowMapDropdown(opening);
+            if (opening) {
+              setShowModelsDropdown(false);
+              setShowUnifyDropdown(false);
+            }
+          } : undefined}>
             <span>{getMapLabel()}</span>
             <span style={{ fontSize: '10px', color: '#94a3b8' }}>▼</span>
           </div>
@@ -332,7 +348,14 @@ const CompactModelTray = ({
           <span style={{ color: '#64748b' }}>•</span>
 
           {/* Unify Label with Dropdown Arrow */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: canRefine ? 'pointer' : 'default', opacity: canRefine ? 1 : 0.5 }} onClick={canRefine ? () => setShowUnifyDropdown(!showUnifyDropdown) : undefined}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: canRefine ? 'pointer' : 'default', opacity: canRefine ? 1 : 0.5 }} onClick={canRefine ? () => {
+            const opening = !showUnifyDropdown;
+            setShowUnifyDropdown(opening);
+            if (opening) {
+              setShowModelsDropdown(false);
+              setShowMapDropdown(false);
+            }
+          } : undefined}>
             <span>{getUnifyLabel()}</span>
             <span style={{ fontSize: '10px', color: '#94a3b8' }}>▼</span>
           </div>
@@ -446,7 +469,13 @@ const CompactModelTray = ({
           )}
 
           <button
-            onClick={() => setIsExpanded(true)}
+            onClick={() => {
+              setIsExpanded(true);
+              // close any open compact dropdowns when opening expanded view
+              setShowModelsDropdown(false);
+              setShowMapDropdown(false);
+              setShowUnifyDropdown(false);
+            }}
             aria-expanded={isExpanded}
             aria-label="Open full settings"
             style={{
