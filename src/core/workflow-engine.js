@@ -13,18 +13,17 @@ function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider, 
     mappingResultText: mappingResult?.text?.length
   });
 
-  // Filter out the synthesizing model's own response and any mapping results from batch outputs
+  // Filter out only the synthesizing model's own response from batch outputs
+  // Keep the mapping model's batch response - only exclude the separate mapping result
   const filteredResults = sourceResults.filter(res => {
     const isSynthesizer = res.providerId === synthesisProvider;
-    const isMapping = mappingResult && res.providerId === mappingResult.providerId;
-    return !isSynthesizer && !isMapping;
+    return !isSynthesizer;
   });
 
   console.log(`[WorkflowEngine] Filtered batch results:`, {
     originalCount: sourceResults?.length,
     filteredCount: filteredResults.length,
-    excludedSynthesizer: synthesisProvider,
-    excludedMapping: mappingResult?.providerId
+    excludedSynthesizer: synthesisProvider
   });
 
   const otherItems = filteredResults

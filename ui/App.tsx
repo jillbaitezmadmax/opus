@@ -1722,39 +1722,8 @@ await api.ensurePort({ sessionId });
     setViewMode(mode);
   };
 
-  const ConnectionStatusBanner = () => {
-    if (connState !== 'reconnecting') return null;
-    return (
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        background: 'yellow',
-        color: '#111827',
-        padding: 8,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        justifyContent: 'center',
-        zIndex: 9999
-      }}>
-        <strong>Reconnecting…</strong>
-        <button onClick={() => refresh()} style={{
-          background: '#f59e0b',
-          color: '#fff',
-          border: 'none',
-          borderRadius: 6,
-          padding: '4px 8px',
-          cursor: 'pointer'
-        }}>Retry now</button>
-      </div>
-    );
-  };
-
   return (
     <div className="sidecar-app-container" style={{ display: 'flex', height: '100vh', overflow: 'hidden', gap: '0px', padding: '0' }}>
-      <ConnectionStatusBanner />
       {alertText && (
         <Banner text={alertText} onClose={() => setAlertText(null)} />
       )}

@@ -13,7 +13,7 @@ const Banner: React.FC<BannerProps> = ({ text, onClose, onOpen }) => {
       aria-live="polite"
       style={{
         position: 'fixed',
-        top: 12,
+        top: 72, // Position below the header (header height ~52px + padding)
         right: 12,
         zIndex: 2000,
         background: 'rgba(15, 23, 42, 0.95)',
