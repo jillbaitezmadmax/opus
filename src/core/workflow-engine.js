@@ -5,50 +5,51 @@
 // =============================================================================
 
 function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider, mappingResult = null) {
-  const otherResults = sourceResults
-    .map(res => `**${(res.providerId || 'UNKNOWN').toUpperCase()}:**\n${String(res.text)}`)
-    .join('\n\n');
+  console.log(`[WorkflowEngine] buildSynthesisPrompt called with:`, {
+    originalPromptLength: originalPrompt?.length,
+    sourceResultsCount: sourceResults?.length,
+    synthesisProvider,
+    hasMappingResult: !!mappingResult,
+    mappingResultText: mappingResult?.text?.length
+  });
 
-  // Include mapping result if available
-  const mappingSection = mappingResult ? `
+  // Filter out the synthesizing model's own response and any mapping results from batch outputs
+  const filteredResults = sourceResults.filter(res => {
+    const isSynthesizer = res.providerId === synthesisProvider;
+    const isMapping = mappingResult && res.providerId === mappingResult.providerId;
+    return !isSynthesizer && !isMapping;
+  });
 
-**CONFLICT RESOLUTION MAP:**
-${mappingResult.text}
+  console.log(`[WorkflowEngine] Filtered batch results:`, {
+    originalCount: sourceResults?.length,
+    filteredCount: filteredResults.length,
+    excludedSynthesizer: synthesisProvider,
+    excludedMapping: mappingResult?.providerId
+  });
 
-` : '';
+  const otherItems = filteredResults
+    .map(res => `**${(res.providerId || 'UNKNOWN').toUpperCase()}:**\n${String(res.text)}`);
 
-  return `your task is to create the best possible response to the user's prompt leveraging all available outputs, resources and insights:   
+  // Note: Mapping result is NOT added to otherItems to avoid duplication
+  // It will only appear in the dedicated mapping section below
 
-  **Original User Query:**
-${originalPrompt}
+  const otherResults = otherItems.join('\n\n');
+  const mappingSection = mappingResult ? `\n\n**CONFLICT RESOLUTION MAP:**\n${mappingResult.text}\n\n` : '';
+  
+  console.log(`[WorkflowEngine] Built synthesis prompt sections:`, {
+    otherResultsLength: otherResults.length,
+    mappingSectionLength: mappingSection.length,
+    hasMappingSection: mappingSection.length > 0,
+    mappingSectionPreview: mappingSection.substring(0, 100) + '...'
+  });
 
-  Process:
-1. Silently review all batch outputs, responses from other models, below and
-2. Include your own previous response as a key source for synthesis.  
-3. Extract the strongest ideas, insights, solutions, and approaches.
-4. ${mappingResult
-     ? 'Create a comprehensive, enhanced answer that resolves the specific conflict identified in the map.'
-     : 'Create a comprehensive, enhanced answer that represents the best collective intelligence available.'
-   }
+  const finalPrompt = `your task is to create the best possible response to the user's prompt leveraging all available outputs, resources and insights:   \n\n  **Original User Query:**\n${originalPrompt}\n\n  Process:\n1. Silently review all batch outputs, responses from other models, below and\n2. Include your own previous response as a key source for synthesis.  \n3. Extract the strongest ideas, insights, solutions, and approaches.\n4. Create a comprehensive, enhanced answer that resolves the specific conflict identified in the map.\n\n\n${mappingSection}\n\nOutput Requirements:\n- Respond directly to the user's original question with the synthesized answer\n- Integrate the most valuable elements from all sources seamlessly\n- Present as a unified, coherent response rather than comparative analysis\n- Aim for higher quality and completeness than any individual response\n- Do not analyze or compare the source outputs in your response\n\n\n\n**Responses from other AI models:**\n${otherResults}\n\n\nBegin`;
 
-
-${mappingSection}
-
-
-Output Requirements:
-- Respond directly to the user's original question with the synthesized answer
-- Integrate the most valuable elements from all sources seamlessly
-- Present as a unified, coherent response rather than comparative analysis
-- Aim for higher quality and completeness than any individual response
-- Do not analyze or compare the source outputs in your response
-
-
-
-**Responses from other AI models:**
-${otherResults}
-
-
-Begin`;
+  console.log(`[WorkflowEngine] Final synthesis prompt length:`, finalPrompt.length);
+  console.log(`[WorkflowEngine] Final synthesis prompt contains "CONFLICT RESOLUTION MAP":`, finalPrompt.includes('CONFLICT RESOLUTION MAP'))
+  console.log(`[WorkflowEngine] Final synthesis prompt contains "(MAP)":`, finalPrompt.includes('(MAP)'));
+  
+  return finalPrompt;
 }
 
 function buildMappingPrompt(userPrompt, sourceResults) {
@@ -58,25 +59,25 @@ function buildMappingPrompt(userPrompt, sourceResults) {
 
   return `You are not a synthesizer. You are a mirror that reveals what others cannot see.
 
-Task: Present ALL insights from the models below in their most useful form for decision-making on "${userPrompt}".
+Task: Present ALL insights from the model outputs below in their most useful form for decision-making on the user's prompt
+
+User Prompt: ${String(userPrompt || '')}
 
 Critical instruction: Do NOT synthesize into a single answer. Instead, reason internally via this structure—then output ONLY as seamless, narrative prose that implicitly embeds it all:
 
 **Map the landscape** — Group similar ideas, preserving tensions and contradictions.
-**Surface the invisible** — Highlight consensus (2+ models), unique sightings (one model) as natural flow.
+**Surface the invisible** — Highlight consensus from 2+ models, unique sightings from one model as natural flow.
 **Frame the choices** — present alternatives as "If you prioritize X, this path fits because Y."
-**Flag the unknowns** — Note disagreements/uncertainties as subtle cautions.
+**Flag the unknowns** — Note disagreements or uncertainties as subtle cautions.
 
-**Internal format for reasoning (NEVER output directly):**
-- What Everyone Sees (consensus)
-- The Tensions (disagreements)
+**Internal format for reasoning - NEVER output directly:**
+- What Everyone Sees, consensus
+- The Tensions, disagreements
 - The Unique Insights
 - The Choice Framework
 - Confidence Check
 
-Finally output your response as a narrative explaining everything implicitly to the user, like a natural response to the user's prompt—fluid, insightful, redacting model names/extraneous details. Build feedback as emergent wisdom—evoke clarity, agency, and subtle awe. Weave your final narrative as representation of a cohesive response of the collective thought to the user's prompt:
-
-User Prompt: ${String(userPrompt || '')}
+Finally output your response as a narrative explaining everything implicitly to the user, like a natural response to the user's prompt—fluid, insightful, redacting model names and extraneous details. Build feedback as emergent wisdom—evoke clarity, agency, and subtle awe. Weave your final narrative as representation of a cohesive response of the collective thought to the user's prompt
 
 Model outputs to analyze:
 ${modelOutputsBlock}`;
@@ -660,15 +661,38 @@ export class WorkflowEngine {
 
     // Look for mapping results from the current workflow
     let mappingResult = null;
-    if (step.mappingStepIds && step.mappingStepIds.length > 0) {
-      for (const mappingStepId of step.mappingStepIds) {
+    console.log(`[WorkflowEngine] Synthesis step has mappingStepIds:`, payload.mappingStepIds);
+    console.log(`[WorkflowEngine] Available previousResults keys:`, Array.from(previousResults.keys()));
+    
+    if (payload.mappingStepIds && payload.mappingStepIds.length > 0) {
+      for (const mappingStepId of payload.mappingStepIds) {
         const mappingStepResult = previousResults.get(mappingStepId);
+        console.log(`[WorkflowEngine] Checking mapping step ${mappingStepId}:`, mappingStepResult);
+        
         if (mappingStepResult?.status === 'completed' && mappingStepResult.result?.text) {
           mappingResult = mappingStepResult.result;
-          console.log(`[WorkflowEngine] Found mapping result from step ${mappingStepId} for synthesis`);
+          console.log(`[WorkflowEngine] Found mapping result from step ${mappingStepId} for synthesis:`, {
+            providerId: mappingResult.providerId,
+            textLength: mappingResult.text?.length,
+            textPreview: mappingResult.text?.substring(0, 100) + '...'
+          });
           break;
+        } else {
+          console.log(`[WorkflowEngine] Mapping step ${mappingStepId} not suitable:`, {
+            status: mappingStepResult?.status,
+            hasResult: !!mappingStepResult?.result,
+            hasText: !!mappingStepResult?.result?.text,
+            textLength: mappingStepResult?.result?.text?.length
+          });
         }
       }
+      // Enforce presence of mapping output when mapping steps are declared
+      if (!mappingResult || !String(mappingResult.text || '').trim()) {
+        console.error(`[WorkflowEngine] No valid mapping result found. mappingResult:`, mappingResult);
+        throw new Error('Synthesis requires a completed Map result; none found.');
+      }
+    } else {
+      console.log(`[WorkflowEngine] No mappingStepIds configured for synthesis step`);
     }
 
     const synthPrompt = buildSynthesisPrompt(

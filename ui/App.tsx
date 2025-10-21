@@ -674,6 +674,13 @@ useEffect(() => {
     setMappingEnabled(enabled);
     // Immediate persistence to prevent stale state
     localStorage.setItem('htos_mapping_enabled', JSON.stringify(enabled));
+    // If mapping is turned off, nullify synthesis selections
+    if (!enabled) {
+      setSynthesisProvider(null);
+      try { localStorage.removeItem('htos_synthesis_provider'); } catch (_) {}
+      setSynthesisProviders([]);
+      try { localStorage.removeItem('htos_synthesis_providers'); } catch (_) {}
+    }
   }, []);
 
   const handleSetMappingProvider = useCallback((providerId: string | null) => {
@@ -687,6 +694,13 @@ useEffect(() => {
       } else {
         localStorage.removeItem('htos_synthesis_provider');
       }
+    }
+    // If mapping provider is cleared, also clear synthesis selections
+    if (!providerId) {
+      setSynthesisProvider(null);
+      try { localStorage.removeItem('htos_synthesis_provider'); } catch (_) {}
+      setSynthesisProviders([]);
+      try { localStorage.removeItem('htos_synthesis_providers'); } catch (_) {}
     }
     // Immediate persistence to prevent stale state
     if (providerId) {
@@ -1414,7 +1428,13 @@ useEffect(() => {
     
     try {
         // Determine synthesis/mapping settings for continuation, same as initial send
-        const shouldUseSynthesis = !!(synthesisProvider && activeProviders.length > 1);
+        const shouldUseSynthesis = !!(
+          synthesisProvider &&
+          activeProviders.length > 1 &&
+          mappingEnabled &&
+          mappingProvider &&
+          activeProviders.includes(mappingProvider as ProviderKey)
+        );
         const shouldUseMapping = !!(mappingEnabled &&
                                   mappingProvider &&
                                   activeProviders.length > 1 &&

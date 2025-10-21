@@ -1,0 +1,4 @@
+qwen chat not continuing, starting new chats when included in conversation later, maybe its the same with all models not included from the first prompt.
+or perhaps qwen is just not continuing at all
+
+gemini is overwriting his message when i send a message after including him back in the conversation he responds appropriately to this first message after hiatus but it seems the provider context is not then carried through for his cursors on the next message and it defaults to overwriting the previous message. I suspect this may be a bug with other models as well. chatgpt might not have this issue because we store the parent message id in the conversation and use that to continue the conversation. but gemini emits three cursors so it shouldnt have this problem if we are updating the context correctly, i will possibly test with the others but fix gemini and qwen first.
