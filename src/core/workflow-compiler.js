@@ -83,57 +83,12 @@ export class WorkflowCompiler {
       ? this._getLatestUserTurnId(sessionId)
       : null;
 
-    // STEP 2: Synthesis (one step per selected synthesis provider)
-    if (synthesis?.enabled && synthesis.providers.length > 0) {
-      synthesis.providers.forEach((provider) => {
-        const synthStepId = `synthesis-${provider}-${Date.now()}`;
-        // ✅ RESPECTS providerModes override for determining continuation
-        const providerMode = providerModes[provider] || mode;
-
-        const synthStep = {
-          stepId: synthStepId,
-          type: "synthesis",
-          payload: {
-            synthesisProvider: provider,
-            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId)
-              ? batchStepId
-              : undefined,
-            sourceStepIds: historicalContext?.userTurnId
-              ? undefined
-              : batchStepId
-              ? [batchStepId]
-              : undefined,
-            sourceHistorical: historicalContext?.userTurnId
-              ? {
-                  turnId: historicalContext.userTurnId,
-                  responseType: historicalContext.sourceType || "batch",
-                }
-              : latestUserTurnId
-              ? {
-                  turnId: latestUserTurnId,
-                  responseType: "batch",
-                }
-              : undefined,
-            originalPrompt: userMessage,
-            useThinking: !!useThinking && provider === "chatgpt",
-            attemptNumber: historicalContext?.attemptNumber || 1,
-          },
-        };
-        steps.push(synthStep);
-        try {
-          console.log('[Compiler] Synthesis step', {
-            synthStepId,
-            provider,
-            ...synthStep.payload
-          });
-        } catch (_) {}
-      });
-    }
-
-    // STEP 3: Mapping (one step per selected mapping provider)
+    // STEP 2: Mapping (one step per selected mapping provider) - NOW RUNS FIRST
+    const mappingStepIds = [];
     if (mapping?.enabled && mapping.providers.length > 0) {
       mapping.providers.forEach((provider) => {
         const mappingStepId = `mapping-${provider}-${Date.now()}`;
+        mappingStepIds.push(mappingStepId);
         // ✅ RESPECTS providerModes override
         const providerMode = providerModes[provider] || mode;
 
@@ -172,6 +127,55 @@ export class WorkflowCompiler {
             mappingStepId,
             provider,
             ...mappingStep.payload
+          });
+        } catch (_) {}
+      });
+    }
+
+    // STEP 3: Synthesis (one step per selected synthesis provider) - NOW RUNS AFTER MAPPING
+    if (synthesis?.enabled && synthesis.providers.length > 0) {
+      synthesis.providers.forEach((provider) => {
+        const synthStepId = `synthesis-${provider}-${Date.now()}`;
+        // ✅ RESPECTS providerModes override for determining continuation
+        const providerMode = providerModes[provider] || mode;
+
+        const synthStep = {
+          stepId: synthStepId,
+          type: "synthesis",
+          payload: {
+            synthesisProvider: provider,
+            continueFromBatchStep: (providerModes[provider] !== 'new-conversation' && batchStepId)
+              ? batchStepId
+              : undefined,
+            sourceStepIds: historicalContext?.userTurnId
+              ? undefined
+              : batchStepId
+              ? [batchStepId]
+              : undefined,
+            // NEW: Include mapping step IDs as dependencies for synthesis
+            mappingStepIds: mappingStepIds.length > 0 ? mappingStepIds : undefined,
+            sourceHistorical: historicalContext?.userTurnId
+              ? {
+                  turnId: historicalContext.userTurnId,
+                  responseType: historicalContext.sourceType || "batch",
+                }
+              : latestUserTurnId
+              ? {
+                  turnId: latestUserTurnId,
+                  responseType: "batch",
+                }
+              : undefined,
+            originalPrompt: userMessage,
+            useThinking: !!useThinking && provider === "chatgpt",
+            attemptNumber: historicalContext?.attemptNumber || 1,
+          },
+        };
+        steps.push(synthStep);
+        try {
+          console.log('[Compiler] Synthesis step', {
+            synthStepId,
+            provider,
+            ...synthStep.payload
           });
         } catch (_) {}
       });

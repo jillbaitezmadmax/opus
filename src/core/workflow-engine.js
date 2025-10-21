@@ -4,21 +4,36 @@
 // HELPER FUNCTIONS FOR PROMPT BUILDING
 // =============================================================================
 
-function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider) {
+function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider, mappingResult = null) {
   const otherResults = sourceResults
     .map(res => `**${(res.providerId || 'UNKNOWN').toUpperCase()}:**\n${String(res.text)}`)
     .join('\n\n');
 
-  return `you along with other models responded to the user's query:  
+  // Include mapping result if available
+  const mappingSection = mappingResult ? `
+
+**CONFLICT RESOLUTION MAP:**
+${mappingResult.text}
+
+` : '';
+
+  return `your task is to create the best possible response to the user's prompt leveraging all available outputs, resources and insights:   
 
   **Original User Query:**
 ${originalPrompt}
 
-  (see your last output) your task is to create the best possible response to the user's original prompt (the prompt before this) leveraging all available outputs, resources and insights.
-Process:
-1. Silently review all batch outputs below, including any response you may have contributed to this batch
-2. Extract the strongest ideas, insights, solutions, and approaches from across all responses
-3. Create a comprehensive, enhanced answer that represents the best collective intelligence available
+  Process:
+1. Silently review all batch outputs, responses from other models, below and
+2. Include your own previous response as a key source for synthesis.  
+3. Extract the strongest ideas, insights, solutions, and approaches.
+4. ${mappingResult
+     ? 'Create a comprehensive, enhanced answer that resolves the specific conflict identified in the map.'
+     : 'Create a comprehensive, enhanced answer that represents the best collective intelligence available.'
+   }
+
+
+${mappingSection}
+
 
 Output Requirements:
 - Respond directly to the user's original question with the synthesized answer
@@ -32,10 +47,6 @@ Output Requirements:
 **Responses from other AI models:**
 ${otherResults}
 
-**Instructions:**
-Integrate the strongest insights from all available responses, resolve conflicts intelligently, and produce a unified answer that surpasses any individual response.
-
-Write directly to answer the query—no meta-commentary, no attribution.
 
 Begin`;
 }
@@ -246,32 +257,32 @@ export class WorkflowEngine {
         }
     }
 
-        // 2. Now, execute synthesis and mapping steps in parallel.
-    const parallelSteps = [...synthesisSteps, ...mappingSteps];
-    if (parallelSteps.length > 0) {
-        const parallelPromises = parallelSteps.map(async (step) => {
-            try {
-                 let result;
-                 switch (step.type) {
-                     case 'synthesis':
-                         result = await this.executeSynthesisStep(step, context, stepResults, workflowContexts);
-                         break;
-                     case 'mapping':
-                         result = await this.executeMappingStep(step, context, stepResults, workflowContexts);
-                         break;
-                 }
-                 stepResults.set(step.stepId, { status: 'completed', result });
-                 this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'completed', result });
-             } catch (error) {
-                console.error(`[WorkflowEngine] Parallel step ${step.stepId} failed:`, error);
-                stepResults.set(step.stepId, { status: 'failed', error: error.message });
-                this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'failed', error: error.message });
-                    // Do not throw; allow other parallel steps to continue.
-            }
-        });
+        // 2. Execute mapping steps first (they must complete before synthesis)
+    for (const step of mappingSteps) {
+        try {
+            const result = await this.executeMappingStep(step, context, stepResults, workflowContexts);
+            stepResults.set(step.stepId, { status: 'completed', result });
+            this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'completed', result });
+        } catch (error) {
+            console.error(`[WorkflowEngine] Mapping step ${step.stepId} failed:`, error);
+            stepResults.set(step.stepId, { status: 'failed', error: error.message });
+            this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'failed', error: error.message });
+            // Continue with other mapping steps even if one fails
+        }
+    }
 
-            // Wait for all parallel steps to finish, regardless of success or failure.
-        await Promise.allSettled(parallelPromises);
+        // 3. Execute synthesis steps (now they can access completed mapping results)
+    for (const step of synthesisSteps) {
+        try {
+            const result = await this.executeSynthesisStep(step, context, stepResults, workflowContexts);
+            stepResults.set(step.stepId, { status: 'completed', result });
+            this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'completed', result });
+        } catch (error) {
+            console.error(`[WorkflowEngine] Synthesis step ${step.stepId} failed:`, error);
+            stepResults.set(step.stepId, { status: 'failed', error: error.message });
+            this.port.postMessage({ type: 'WORKFLOW_STEP_UPDATE', sessionId: context.sessionId, stepId: step.stepId, status: 'failed', error: error.message });
+            // Continue with other synthesis steps even if one fails
+        }
     }
     
         // 3. Signal completion.
@@ -647,10 +658,24 @@ export class WorkflowEngine {
     console.log(`[WorkflowEngine] Running synthesis with ${sourceData.length} sources:`, 
       sourceData.map(s => s.providerId).join(', '));
 
+    // Look for mapping results from the current workflow
+    let mappingResult = null;
+    if (step.mappingStepIds && step.mappingStepIds.length > 0) {
+      for (const mappingStepId of step.mappingStepIds) {
+        const mappingStepResult = previousResults.get(mappingStepId);
+        if (mappingStepResult?.status === 'completed' && mappingStepResult.result?.text) {
+          mappingResult = mappingStepResult.result;
+          console.log(`[WorkflowEngine] Found mapping result from step ${mappingStepId} for synthesis`);
+          break;
+        }
+      }
+    }
+
     const synthPrompt = buildSynthesisPrompt(
       payload.originalPrompt, 
       sourceData, 
-      payload.synthesisProvider
+      payload.synthesisProvider,
+      mappingResult
     );
 
     // Resolve provider context using three-tier resolution

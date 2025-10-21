@@ -166,6 +166,9 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
   const { connState, refresh } = useConnection(api);
   const [connectionStatus, setConnectionStatus] = useState<{ isConnected: boolean; isReconnecting: boolean }>({ isConnected: false, isReconnecting: true });
   
+  // UI alert banner state
+  const [alertText, setAlertText] = useState<string | null>(null);
+  
   // Round-level action bar selections
   const [synthSelectionsByRound, setSynthSelectionsByRound] = useState<Record<string, Record<string, boolean>>>({});
   const [mappingSelectionByRound, setMappingSelectionByRound] = useState<Record<string, string | null>>({});
@@ -613,6 +616,17 @@ useEffect(() => {
     const alreadySynthPids = ai?.synthesisResponses ? Object.keys(ai.synthesisResponses) : [];
     const alreadyMappingPids = ai?.mappingResponses ? Object.keys(ai.mappingResponses) : [];
 
+    // Determine if there is at least one completed mapping result in this round
+    const hasCompletedMapping = (() => {
+      if (!ai?.mappingResponses) return false;
+      for (const [pid, resp] of Object.entries(ai.mappingResponses as Record<string, any>)) {
+        const arr: ProviderResponse[] = Array.isArray(resp) ? (resp as ProviderResponse[]) : [resp as ProviderResponse];
+        const last = arr[arr.length - 1];
+        if (last && last.status === 'completed' && (last.text?.trim())) return true;
+      }
+      return false;
+    })();
+
     // Build eligibility map for Synthesis (multi-select)
     const synthMap: Record<string, { disabled: boolean; reason?: string }> = {};
     LLM_PROVIDERS_CONFIG.forEach(p => {
@@ -624,6 +638,8 @@ useEffect(() => {
         synthMap[p.id] = { disabled: true, reason: 'Provider continued after this round' };
       } else if (alreadySynth) {
         synthMap[p.id] = { disabled: true, reason: 'Already synthesized for this round' };
+      } else if (!hasCompletedMapping) {
+        synthMap[p.id] = { disabled: true, reason: 'Requires Map result before synthesis' };
       } else {
         synthMap[p.id] = { disabled: false };
       }
@@ -648,7 +664,7 @@ useEffect(() => {
     return {
       synthMap,
       mappingMap,
-      disableSynthesisRun: !enoughOutputs,
+      disableSynthesisRun: !enoughOutputs || !hasCompletedMapping,
       disableMappingRun: !enoughOutputs,
     };
   }, [findRoundForUserTurn, providerHasActivityAfter]);
@@ -714,6 +730,24 @@ useEffect(() => {
     if (!roundInfo || !roundInfo.user || !roundInfo.ai) return;
     
     const { ai } = roundInfo;
+
+    // Gating: require at least one completed Map result before synthesis
+    {
+      const hasCompletedMapping = (() => {
+        const map = ai.mappingResponses || {};
+        for (const [pid, resp] of Object.entries(map as Record<string, any>)) {
+          const arr: ProviderResponse[] = Array.isArray(resp) ? (resp as ProviderResponse[]) : [resp as ProviderResponse];
+          const last = arr[arr.length - 1];
+          if (last && last.status === 'completed' && (last.text?.trim())) return true;
+        }
+        return false;
+      })();
+      if (!hasCompletedMapping) {
+        setAlertText('Synthesis requires a Map result for this turn. Run Mapping first.');
+        return;
+      }
+    }
+
     const results: Record<string, string> = {};
     Object.entries(ai.batchResponses || {}).forEach(([pid, resp]) => {
       const r = resp as ProviderResponse;
@@ -1701,6 +1735,9 @@ await api.ensurePort({ sessionId });
   return (
     <div className="sidecar-app-container" style={{ display: 'flex', height: '100vh', overflow: 'hidden', gap: '0px', padding: '0' }}>
       <ConnectionStatusBanner />
+      {alertText && (
+        <Banner text={alertText} onClose={() => setAlertText(null)} />
+      )}
       <div
         className="main-content-wrapper"
         style={{
