@@ -20,6 +20,105 @@ export class SessionManager {
   }
 
   /**
+   * Append provider responses (mapping/synthesis/batch) to an existing AI turn
+   * that follows the given historical user turn. Used to persist historical reruns
+   * without creating a new user/ai turn pair.
+   * additions shape: { batchResponses?, synthesisResponses?, mappingResponses? }
+   */
+  async appendProviderResponses(sessionId, targetUserTurnId, additions = {}) {
+    try {
+      const usePA = this.usePersistenceAdapter && this.isInitialized && this.adapter?.isReady();
+
+      // Locate AI turn following the target user turn in legacy cache first
+      let session = this.sessions[sessionId];
+      if (!session) {
+        // Hydrate via getOrCreate to ensure legacy cache exists
+        session = await this.getOrCreateSession(sessionId);
+      }
+      let turns = Array.isArray(session?.turns) ? session.turns : [];
+      let userIdx = turns.findIndex(t => t && t.id === targetUserTurnId && (t.type === 'user' || t.role === 'user'));
+      if (userIdx === -1 || !turns[userIdx + 1] || (turns[userIdx + 1].type !== 'ai' && turns[userIdx + 1].role !== 'assistant')) {
+        // Relocate: search all sessions for the correct one containing targetUserTurnId
+        const all = this.sessions || {};
+        let relocated = null;
+        for (const [sid, s] of Object.entries(all)) {
+          const arr = Array.isArray(s?.turns) ? s.turns : [];
+          const idx = arr.findIndex(t => t && t.id === targetUserTurnId && (t.type === 'user' || t.role === 'user'));
+          if (idx !== -1 && arr[idx + 1] && (arr[idx + 1].type === 'ai' || arr[idx + 1].role === 'assistant')) {
+            sessionId = sid; // update to correct session
+            session = s;
+            turns = arr;
+            userIdx = idx;
+            relocated = sid;
+            break;
+          }
+        }
+        if (!relocated) {
+          console.warn(`[SessionManager] appendProviderResponses: AI turn not found after userTurn ${targetUserTurnId} in any session`);
+          return false;
+        }
+        console.warn(`[SessionManager] appendProviderResponses: relocated to session ${relocated} for userTurn ${targetUserTurnId}`);
+      }
+      const aiTurn = turns[userIdx + 1];
+
+      const now = Date.now();
+      const ensureArrayBucket = (obj, key) => { if (!obj[key]) obj[key] = []; return obj[key]; };
+
+      const persistBucket = async (bucket, responseType) => {
+        if (!bucket) return;
+        for (const [providerId, value] of Object.entries(bucket)) {
+          const entries = Array.isArray(value) ? value : [value];
+          for (let idx = 0; idx < entries.length; idx++) {
+            const entry = entries[idx] || {};
+            // Update legacy mirror
+            if (responseType === 'mapping') {
+              const arr = ensureArrayBucket(aiTurn.mappingResponses = (aiTurn.mappingResponses || {}), providerId);
+              arr.push({ providerId, text: entry.text || '', status: entry.status || 'completed', meta: entry.meta || {} });
+            } else if (responseType === 'synthesis') {
+              const arr = ensureArrayBucket(aiTurn.synthesisResponses = (aiTurn.synthesisResponses || {}), providerId);
+              arr.push({ providerId, text: entry.text || '', status: entry.status || 'completed', meta: entry.meta || {} });
+            } else if (responseType === 'batch') {
+              aiTurn.batchResponses = aiTurn.batchResponses || {};
+              aiTurn.batchResponses[providerId] = { providerId, text: entry.text || '', status: entry.status || 'completed', meta: entry.meta || {} };
+            }
+
+            if (usePA) {
+              // Persist provider response record
+              const respId = `pr-${sessionId}-${aiTurn.id}-${providerId}-${responseType}-${idx}-${Date.now()}`;
+              const record = {
+                id: respId,
+                sessionId,
+                aiTurnId: aiTurn.id,
+                providerId,
+                responseType,
+                responseIndex: idx,
+                text: entry.text || '',
+                status: entry.status || 'completed',
+                meta: entry.meta || {},
+                createdAt: now,
+                updatedAt: now,
+                completedAt: now
+              };
+              await this.adapter.put('provider_responses', record);
+            }
+          }
+        }
+      };
+
+      await persistBucket(additions.batchResponses, 'batch');
+      await persistBucket(additions.synthesisResponses, 'synthesis');
+      await persistBucket(additions.mappingResponses, 'mapping');
+
+      session.lastActivity = now;
+      await this.saveSession(sessionId);
+      return true;
+    } catch (error) {
+      console.error('[SessionManager] appendProviderResponses failed:', error);
+      return false;
+    }
+  }
+
+  /**
    * Helper function to count responses in a response bucket
    * @param {Object} responseBucket - Object containing provider responses
    * @returns {number} Total count of responses

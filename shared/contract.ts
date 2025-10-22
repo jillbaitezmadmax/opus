@@ -1,7 +1,7 @@
 // ============================================================================
 // CORE TYPES & ENUMS
 // ============================================================================
-export type ProviderKey = "claude" | "gemini" | "chatgpt" | "qwen";
+export type ProviderKey = "claude" | "gemini" | "gemini-pro" | "chatgpt" | "qwen";
 export type WorkflowStepType = "prompt" | "synthesis" | "mapping";
 export type WorkflowMode = "new-conversation" | "continuation";
 export type SynthesisStrategy = "continuation" | "fresh";
@@ -20,6 +20,12 @@ export interface ExecuteWorkflowRequest {
   mode: WorkflowMode; // Global default
   userMessage: string;
   providers: ProviderKey[];
+
+  // Optional per-provider mode overrides (e.g., force new-conversation for a provider)
+  providerModes?: Partial<Record<ProviderKey, WorkflowMode>>;
+
+  // Optional per-provider metadata to pass through to adapters (e.g., Gemini model selection)
+  providerMeta?: Partial<Record<ProviderKey, any>>;
 
   // Multi-synthesis: Array of providers that each synthesize
   synthesis?: { enabled: boolean; providers: ProviderKey[] };
@@ -60,6 +66,8 @@ export interface PromptStepPayload {
     ProviderKey,
     { meta: any; continueThread: boolean }
   >;
+  // Arbitrary per-provider metadata to be forwarded to orchestrator/adapters
+  providerMeta?: Partial<Record<ProviderKey, any>>;
   hidden?: boolean;
   useThinking?: boolean;
 }

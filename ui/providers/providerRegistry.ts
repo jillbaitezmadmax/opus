@@ -17,6 +17,7 @@ export const INITIAL_PROVIDERS: ProviderConfig[] = [
   { id: 'chatgpt', name: 'ChatGPT', color: '#10A37F', logoBgClass: 'bg-green-500', hostnames: ['chat.openai.com','chatgpt.com'], icon: ChatGPTIcon },
   { id: 'claude',  name: 'Claude',  color: '#FF7F00', logoBgClass: 'bg-orange-500', hostnames: ['claude.ai'],                   icon: ClaudeIcon },
   { id: 'gemini',  name: 'Gemini',  color: '#4285F4', logoBgClass: 'bg-blue-500',   hostnames: ['gemini.google.com'],           icon: GeminiIcon },
+  { id: 'gemini-pro', name: 'Gemini 2.5 Pro', color: '#3B82F6', logoBgClass: 'bg-blue-600', hostnames: ['gemini.google.com'], icon: GeminiIcon },
   { id: 'qwen',    name: 'Qwen',    color: '#00A9E0', logoBgClass: 'bg-cyan-500', hostnames: ['tongyi.aliyun.com'],           icon: QwenIcon, emoji: '🤖' },
 ];
 

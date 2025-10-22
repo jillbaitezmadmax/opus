@@ -72,8 +72,10 @@ export class PortHealthManager {
   }
 
   private handleMessage(message: any) {
+    // Any inbound traffic indicates the port is alive; update timestamp first
+    this.lastPongTimestamp = Date.now();
+
     if (message.type === 'KEEPALIVE_PONG') {
-      this.lastPongTimestamp = Date.now();
       
       if (!this.isConnected) {
         this.isConnected = true;
@@ -85,7 +87,6 @@ export class PortHealthManager {
     
     if (message.type === 'HANDLER_READY') {
       console.log('[PortHealthManager] Service worker handler ready');
-      this.lastPongTimestamp = Date.now();
       this.isConnected = true;
       return;
     }

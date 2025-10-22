@@ -42,8 +42,35 @@ function buildSynthesisPrompt(originalPrompt, sourceResults, synthesisProvider, 
     mappingSectionPreview: mappingSection.substring(0, 100) + '...'
   });
 
-  const finalPrompt = `your task is to create the best possible response to the user's prompt leveraging all available outputs, resources and insights:   \n\n  **Original User Query:**\n${originalPrompt}\n\n  Process:\n1. Silently review all batch outputs, responses from other models, below and\n2. Include your own previous response as a key source for synthesis.  \n3. Extract the strongest ideas, insights, solutions, and approaches.\n4. Create a comprehensive, enhanced answer that resolves the specific conflict identified in the map.\n\n\n${mappingSection}\n\nOutput Requirements:\n- Respond directly to the user's original question with the synthesized answer\n- Integrate the most valuable elements from all sources seamlessly\n- Present as a unified, coherent response rather than comparative analysis\n- Aim for higher quality and completeness than any individual response\n- Do not analyze or compare the source outputs in your response\n\n\n\n**Responses from other AI models:**\n${otherResults}\n\n\nBegin`;
+  const finalPrompt = `Your task is to create the best possible response to the user's prompt leveraging all available outputs, resources and insights:
 
+<original_user_query>
+${originalPrompt}
+</original_user_query>
+
+Process:
+1. Review your previous response from the conversation history above
+2. Review all batch outputs from other models below
+3. Review the conflict map to understand divergences and tensions
+4. Extract the strongest ideas, insights, and approaches, treating your previous response as one equal source among the batch outputs, from ALL sources
+5. Create a comprehensive answer that resolves the specific conflicts identified in the map
+
+<conflict_map>
+${mappingSection}
+</conflict_map>
+
+Output Requirements:
+- Respond directly to the user's original question with the synthesized answer
+- Integrate the most valuable elements from all sources, including your previous response, seamlessly as equals
+- Present as a unified, coherent response rather than comparative analysis
+- Aim for higher quality than any individual response by resolving the conflicts the map identified
+- Do not analyze or compare the source outputs in your response
+
+<model_outputs>
+${otherResults}
+</model_outputs>
+
+Begin`;
   console.log(`[WorkflowEngine] Final synthesis prompt length:`, finalPrompt.length);
   console.log(`[WorkflowEngine] Final synthesis prompt contains "CONFLICT RESOLUTION MAP":`, finalPrompt.includes('CONFLICT RESOLUTION MAP'))
   console.log(`[WorkflowEngine] Final synthesis prompt contains "(MAP)":`, finalPrompt.includes('(MAP)'));
@@ -60,7 +87,7 @@ function buildMappingPrompt(userPrompt, sourceResults) {
 
 Task: Present ALL insights from the model outputs below in their most useful form for decision-making on the user's prompt
 
-User Prompt: ${String(userPrompt || '')}
+<user_prompt>: ${String(userPrompt || '')} </user_prompt>
 
 Critical instruction: Do NOT synthesize into a single answer. Instead, reason internally via this structure—then output ONLY as seamless, narrative prose that implicitly embeds it all:
 
@@ -78,8 +105,9 @@ Critical instruction: Do NOT synthesize into a single answer. Instead, reason in
 
 Finally output your response as a narrative explaining everything implicitly to the user, like a natural response to the user's prompt—fluid, insightful, redacting model names and extraneous details. Build feedback as emergent wisdom—evoke clarity, agency, and subtle awe. Weave your final narrative as representation of a cohesive response of the collective thought to the user's prompt
 
-Model outputs to analyze:
-${modelOutputsBlock}`;
+<model_outputs>:
+${modelOutputsBlock}
+</model_outputs>`;
 }
 
 // Track last seen text per provider/session for delta streaming
@@ -304,8 +332,64 @@ export class WorkflowEngine {
    * Skips persistence for historical reruns (targetUserTurnId present).
    */
   _persistCompletedTurn(context, steps, stepResults) {
-    // Skip persistence for historical reruns
-    if (context?.targetUserTurnId) return;
+    // For historical reruns, append mapping/synthesis results to the existing AI turn
+    if (context?.targetUserTurnId) {
+      try {
+        // Collect provider outputs from this workflow
+        const batchResponses = {};
+        const synthesisResponses = {};
+        const mappingResponses = {};
+
+        const stepById = new Map((steps || []).map(s => [s.stepId, s]));
+        stepResults.forEach((value, stepId) => {
+          const step = stepById.get(stepId);
+          if (!step || value?.status !== 'completed') return;
+          const result = value.result;
+          switch (step.type) {
+            case 'prompt': {
+              const resultsObj = result?.results || {};
+              Object.entries(resultsObj).forEach(([providerId, r]) => {
+                batchResponses[providerId] = {
+                  providerId,
+                  text: r.text || '',
+                  status: r.status || 'completed',
+                  meta: r.meta || {}
+                };
+              });
+              break;
+            }
+            case 'synthesis': {
+              const providerId = result?.providerId;
+              if (!providerId) return;
+              const entry = { providerId, text: result?.text || '', status: result?.status || 'completed', meta: result?.meta || {} };
+              if (!synthesisResponses[providerId]) synthesisResponses[providerId] = [];
+              synthesisResponses[providerId].push(entry);
+              break;
+            }
+            case 'mapping': {
+              const providerId = result?.providerId;
+              if (!providerId) return;
+              const entry = { providerId, text: result?.text || '', status: result?.status || 'completed', meta: result?.meta || {} };
+              if (!mappingResponses[providerId]) mappingResponses[providerId] = [];
+              mappingResponses[providerId].push(entry);
+              break;
+            }
+          }
+        });
+
+        const additions = {};
+        if (Object.keys(batchResponses).length > 0) additions.batchResponses = batchResponses;
+        if (Object.keys(synthesisResponses).length > 0) additions.synthesisResponses = synthesisResponses;
+        if (Object.keys(mappingResponses).length > 0) additions.mappingResponses = mappingResponses;
+
+        if (Object.keys(additions).length > 0) {
+          this.sessionManager.appendProviderResponses(context.sessionId, context.targetUserTurnId, additions);
+        }
+      } catch (e) {
+        console.warn('[WorkflowEngine] Failed to append historical provider responses:', e);
+      }
+      return;
+    }
 
     const userMessage = context?.userMessage || this.currentUserMessage || '';
     if (!userMessage) return; // No content to persist
@@ -466,6 +550,8 @@ export class WorkflowEngine {
         sessionId: context.sessionId,
         useThinking,
         providerContexts,
+        // Pass providerMeta through to orchestrator for adapters (e.g., gemini model selection)
+        providerMeta: step?.payload?.providerMeta,
         onPartial: (providerId, chunk) => {
   const delta = makeDelta(context.sessionId, providerId, chunk.text);
   
@@ -570,14 +656,31 @@ export class WorkflowEngine {
       const { turnId: userTurnId, responseType } = payload.sourceHistorical;
       console.log(`[WorkflowEngine] Resolving historical data from turn: ${userTurnId}`);
       
-      const session = this.sessionManager.sessions[context.sessionId];
-      if (!session) throw new Error(`Session ${context.sessionId} not found.`);
-
-      // Find the AI turn that FOLLOWS the user turn
-      const userTurnIndex = session.turns.findIndex(t => t.id === userTurnId && t.type === 'user');
-      if (userTurnIndex === -1) throw new Error(`Historical user turn ${userTurnId} not found.`);
-      
-      const aiTurn = session.turns[userTurnIndex + 1];
+      // Prefer current session
+      let session = this.sessionManager.sessions[context.sessionId];
+      let aiTurn = null;
+      if (session && Array.isArray(session.turns)) {
+        const userTurnIndex = session.turns.findIndex(t => t.id === userTurnId && t.type === 'user');
+        if (userTurnIndex !== -1) {
+          aiTurn = session.turns[userTurnIndex + 1];
+        }
+      }
+      // Fallback: search across all sessions (helps after reconnects or wrong session targeting)
+      if (!aiTurn) {
+        try {
+          const allSessions = this.sessionManager.sessions || {};
+          for (const [sid, s] of Object.entries(allSessions)) {
+            if (!s || !Array.isArray(s.turns)) continue;
+            const idx = s.turns.findIndex(t => t.id === userTurnId && t.type === 'user');
+            if (idx !== -1) {
+              aiTurn = s.turns[idx + 1];
+              session = s;
+              console.warn(`[WorkflowEngine] Historical turn ${userTurnId} found in different session ${sid}; proceeding with that context.`);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
       if (!aiTurn || aiTurn.type !== 'ai') {
         throw new Error(`Could not find corresponding AI turn for ${userTurnId}`);
       }
@@ -692,6 +795,93 @@ export class WorkflowEngine {
       }
     } else {
       console.log(`[WorkflowEngine] No mappingStepIds configured for synthesis step`);
+      // Historical synthesis case: attempt to retrieve a prior mapping result
+      if (!mappingResult && payload.sourceHistorical?.turnId) {
+        try {
+          const userTurnId = payload.sourceHistorical.turnId;
+          // Locate the historical AI turn (reuse logic from resolveSourceData)
+          let session = this.sessionManager.sessions[context.sessionId];
+          let aiTurn = null;
+          if (session && Array.isArray(session.turns)) {
+            const userTurnIndex = session.turns.findIndex(t => t.id === userTurnId && t.type === 'user');
+            if (userTurnIndex !== -1) {
+              aiTurn = session.turns[userTurnIndex + 1];
+            }
+          }
+          if (!aiTurn) {
+            const allSessions = this.sessionManager.sessions || {};
+            for (const [sid, s] of Object.entries(allSessions)) {
+              if (!s || !Array.isArray(s.turns)) continue;
+              const idx = s.turns.findIndex(t => t.id === userTurnId && t.type === 'user');
+              if (idx !== -1) {
+                aiTurn = s.turns[idx + 1];
+                session = s;
+                console.warn(`[WorkflowEngine] (Synthesis) Using mapping from historical session ${sid}`);
+                break;
+              }
+            }
+          }
+          if (aiTurn && aiTurn.type === 'ai') {
+            let maps = aiTurn.mappingResponses || {};
+            // Fallback: if maps look empty, rehydrate session from persistence and retry
+            if (!maps || Object.keys(maps).length === 0) {
+              try {
+                if (this.sessionManager.adapter?.isReady && this.sessionManager.adapter.isReady()) {
+                  const rebuilt = await this.sessionManager.buildLegacySessionObject(session.sessionId || context.sessionId);
+                  if (rebuilt) {
+                    this.sessionManager.sessions[rebuilt.sessionId] = rebuilt;
+                    const refreshedTurns = Array.isArray(rebuilt.turns) ? rebuilt.turns : [];
+                    const idx2 = refreshedTurns.findIndex(t => t && t.id === userTurnId && (t.type === 'user' || t.role === 'user'));
+                    if (idx2 !== -1 && refreshedTurns[idx2 + 1] && (refreshedTurns[idx2 + 1].type === 'ai' || refreshedTurns[idx2 + 1].role === 'assistant')) {
+                      const refreshedAi = refreshedTurns[idx2 + 1];
+                      maps = refreshedAi.mappingResponses || {};
+                      console.log('[WorkflowEngine] Rehydrated session from persistence for historical mapping lookup');
+                    }
+                  }
+                }
+              } catch (rehydrateErr) {
+                console.warn('[WorkflowEngine] Rehydrate attempt failed:', rehydrateErr);
+              }
+            }
+            // Pick the most recent mapping entry across providers (fallback: first available)
+            let candidate = null;
+            let candidatePid = null;
+            for (const [pid, arr] of Object.entries(maps)) {
+              if (Array.isArray(arr) && arr.length > 0) {
+                const last = arr[arr.length - 1];
+                if (last && String(last.text || '').trim()) {
+                  candidate = last; candidatePid = pid;
+                }
+              }
+            }
+            if (!candidate && this.sessionManager.adapter?.isReady && this.sessionManager.adapter.isReady()) {
+              // Directly query provider_responses for this aiTurnId
+              try {
+                const allPR = await this.sessionManager.adapter.getAll('provider_responses');
+                const pMaps = allPR
+                  .filter(r => r && r.sessionId && r.aiTurnId === aiTurn.id && r.responseType === 'mapping' && r.text && String(r.text).trim().length > 0)
+                  .sort((a,b) => (a.updatedAt||a.createdAt||0) - (b.updatedAt||b.createdAt||0));
+                const last = pMaps[pMaps.length - 1];
+                if (last) {
+                  candidate = { text: last.text, meta: last.meta || {} };
+                  candidatePid = last.providerId || 'unknown';
+                  console.log('[WorkflowEngine] Fallback provider_responses lookup succeeded for historical mapping');
+                }
+              } catch (e2) {
+                console.warn('[WorkflowEngine] provider_responses fallback failed:', e2);
+              }
+            }
+            if (candidate) {
+              mappingResult = { providerId: candidatePid, text: candidate.text, meta: candidate.meta };
+              console.log(`[WorkflowEngine] Attached historical mapping result from ${candidatePid} (len=${candidate.text?.length})`);
+            } else {
+              console.log(`[WorkflowEngine] No historical mapping result found for userTurn ${userTurnId}`);
+            }
+          }
+        } catch (e) {
+          console.warn('[WorkflowEngine] Failed to fetch historical mapping for synthesis:', e);
+        }
+      }
     }
 
     const synthPrompt = buildSynthesisPrompt(
@@ -716,6 +906,7 @@ export class WorkflowEngine {
         sessionId: context.sessionId,
         useThinking: payload.useThinking,
         providerContexts: Object.keys(providerContexts).length ? providerContexts : undefined,
+        providerMeta: step?.payload?.providerMeta,
         onPartial: (providerId, chunk) => {
   const delta = makeDelta(context.sessionId, providerId, chunk.text);
   
@@ -811,6 +1002,7 @@ export class WorkflowEngine {
         sessionId: context.sessionId,
         useThinking: payload.useThinking,
         providerContexts: Object.keys(providerContexts).length ? providerContexts : undefined,
+        providerMeta: step?.payload?.providerMeta,
         onPartial: (providerId, chunk) => {
   const delta = makeDelta(context.sessionId, providerId, chunk.text);
   

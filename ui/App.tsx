@@ -180,6 +180,8 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
   const [activeClips, setActiveClips] = useState<Record<string, { synthesis?: string; mapping?: string }>>({});
   // Chat input height for dynamic positioning
   const [chatInputHeight, setChatInputHeight] = useState<number>(80);
+  // Show a scroll-to-bottom button when scrolled up beyond last few turns
+  const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
   
   // Composer Mode state
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.CHAT);
@@ -1428,17 +1430,17 @@ useEffect(() => {
     
     try {
         // Determine synthesis/mapping settings for continuation, same as initial send
+        // Synthesis should NOT depend on mapping flags; mapping is optional.
         const shouldUseSynthesis = !!(
           synthesisProvider &&
-          activeProviders.length > 1 &&
+          activeProviders.length > 1
+        );
+        const shouldUseMapping = !!(
           mappingEnabled &&
           mappingProvider &&
+          activeProviders.length > 1 &&
           activeProviders.includes(mappingProvider as ProviderKey)
         );
-        const shouldUseMapping = !!(mappingEnabled &&
-                                  mappingProvider &&
-                                  activeProviders.length > 1 &&
-                                  activeProviders.includes(mappingProvider as ProviderKey));
 
         // Debug: log gating and provider selections for continuation
         try {
@@ -1868,6 +1870,33 @@ await api.ensurePort({ sessionId });
                 </div>
               )}
 
+      {/* Floating Scroll-to-bottom button */}
+      {viewMode === ViewMode.CHAT && showScrollToBottom && (
+        <button
+          onClick={() => {
+            const idx = messages.length > 0 ? messages.length - 1 : 0;
+            try { virtuosoRef.current?.scrollToIndex({ index: idx, align: 'end', behavior: 'smooth' as any }); } catch {}
+          }}
+          aria-label="Scroll to bottom"
+          style={{
+            position: 'fixed',
+            right: 20,
+            bottom: (chatInputHeight || 80) + 24,
+            zIndex: 1200,
+            background: '#334155',
+            border: '1px solid #475569',
+            borderRadius: 20,
+            padding: '8px 12px',
+            color: '#e2e8f0',
+            fontSize: 12,
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+          }}
+        >
+          ↓ Scroll to bottom
+        </button>
+      )}
+
               {!showWelcome && (
                 <Virtuoso
                   ref={virtuosoRef}
@@ -1879,6 +1908,15 @@ await api.ensurePort({ sessionId });
                   overscan={8}
                   computeItemKey={(index, message) => (message as any).id}
                   increaseViewportBy={{ top: 200, bottom: 800 }}
+                  rangeChanged={(range) => {
+                    // If the last rendered item is at least 2 away from the end, show the button
+                    const threshold = 2;
+                    const shouldShow = (messages.length - 1) - range.endIndex >= threshold;
+                    setShowScrollToBottom(shouldShow);
+                  }}
+                  atBottomStateChange={(atBottom) => {
+                    if (atBottom) setShowScrollToBottom(false);
+                  }}
                 />
               )}
             </div>

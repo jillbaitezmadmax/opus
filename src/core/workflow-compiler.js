@@ -26,11 +26,43 @@ export class WorkflowCompiler {
       userMessage,
       providers,
       providerModes = {}, // Default to empty object for safety
+      providerMeta = {},
       synthesis,
       mapping,
       useThinking,
       historicalContext,
     } = request;
+
+    // Defensive: if sessionId is null but this is clearly not a new conversation
+    // (historical mapping/synthesis or continuation), attempt to relocate to the
+    // correct session before generating context. This complements the
+    // ConnectionHandler-level relocation.
+    let effectiveSessionId = sessionId;
+    try {
+      const isHistorical = !!historicalContext?.userTurnId;
+      const isContinuation = mode === 'continuation';
+      const isNew = mode === 'new-conversation';
+      if (!isNew && !effectiveSessionId) {
+        if (isHistorical) {
+          const targetTurnId = historicalContext.userTurnId;
+          const sessions = this.sessionManager?.sessions || {};
+          for (const [sid, s] of Object.entries(sessions)) {
+            const turns = Array.isArray(s?.turns) ? s.turns : [];
+            const idx = turns.findIndex(t => t?.id === targetTurnId && (t?.type === 'user' || t?.role === 'user'));
+            if (idx !== -1) { effectiveSessionId = sid; break; }
+          }
+        }
+        if (!effectiveSessionId && isContinuation) {
+          const sessions = this.sessionManager?.sessions || {};
+          let bestSid = null, bestTs = -1;
+          for (const [sid, s] of Object.entries(sessions)) {
+            const ts = Number(s?.lastActivity) || 0;
+            if (ts > bestTs) { bestTs = ts; bestSid = sid; }
+          }
+          if (bestSid) effectiveSessionId = bestSid;
+        }
+      }
+    } catch (_) {}
 
     const workflowId = this._generateWorkflowId(mode);
     const steps = [];
@@ -62,6 +94,8 @@ export class WorkflowCompiler {
             providerModes,
             historicalContext
           ),
+          // ✅ Pass through per-provider metadata (e.g., gemini model)
+          providerMeta,
         },
       });
       try {
@@ -80,7 +114,7 @@ export class WorkflowCompiler {
     // provided by the UI, automatically source from the latest completed turn
     // so synthesis/mapping works on subsequent rounds without needing explicit UI context.
     const latestUserTurnId = (!historicalContext?.userTurnId && !batchStepId)
-      ? this._getLatestUserTurnId(sessionId)
+      ? this._getLatestUserTurnId(effectiveSessionId || sessionId)
       : null;
 
     // STEP 2: Mapping (one step per selected mapping provider) - NOW RUNS FIRST
@@ -190,11 +224,12 @@ export class WorkflowCompiler {
       context: (() => {
         let ctxSessionId;
         let sessionCreated = false;
-        if (sessionId === null) {
+        if (mode === 'new-conversation' && sessionId === null) {
+          // Only create new session for explicit new-conversation
           ctxSessionId = `sid-${Date.now()}`;
           sessionCreated = true;
         } else {
-          ctxSessionId = sessionId || "new-session";
+          ctxSessionId = effectiveSessionId || sessionId || "new-session";
         }
         return {
           sessionId: ctxSessionId,
@@ -307,7 +342,7 @@ export class WorkflowCompiler {
         "Request must specify at least one action: providers, synthesis, or mapping."
       );
     }
-    const validProviders = ["claude", "gemini", "chatgpt", "qwen"];
+    const validProviders = ["claude", "gemini", "gemini-pro", "chatgpt", "qwen"];
     const allProviderIds = [
       ...(request.providers || []),
       ...(request.synthesis?.providers || []),

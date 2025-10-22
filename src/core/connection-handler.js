@@ -108,6 +108,9 @@ export class ConnectionHandler {
       // Activate lifecycle manager before workflow
       this.lifecycleManager?.activateWorkflowMode();
 
+      // Auto-relocate sessionId if needed (after reconnects or UI drift)
+      this._relocateSessionId(executeRequest);
+
       // Compile high-level request to detailed workflow
       const workflowRequest = this.services.compiler.compile(executeRequest);
 
@@ -117,6 +120,55 @@ export class ConnectionHandler {
     } finally {
       // Deactivate lifecycle manager after workflow
       this.lifecycleManager?.deactivateWorkflowMode();
+    }
+  }
+
+  /**
+   * Session relocation guard: if the UI sends sessionId=null for a request that
+   * is clearly NOT a new conversation (historical mapping/synthesis or continuation),
+   * find the correct session to attach to.
+   */
+  _relocateSessionId(executeRequest) {
+    try {
+      const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
+      const isContinuation = executeRequest?.mode === 'continuation';
+      const isNew = executeRequest?.mode === 'new-conversation';
+
+      if (isNew) return; // New chat is allowed to pass null to create a session
+      if (executeRequest?.sessionId) return; // Already set correctly
+
+      // If historical, search for the session that contains the user turn
+      if (isHistorical) {
+        const targetTurnId = executeRequest.historicalContext.userTurnId;
+        const sessions = this.services.sessionManager?.sessions || {};
+        for (const [sid, s] of Object.entries(sessions)) {
+          const turns = Array.isArray(s?.turns) ? s.turns : [];
+          const idx = turns.findIndex(t => t?.id === targetTurnId && (t?.type === 'user' || t?.role === 'user'));
+          if (idx !== -1) {
+            executeRequest.sessionId = sid;
+            console.warn(`[ConnectionHandler] Relocated historical request to session ${sid}`);
+            return;
+          }
+        }
+        // If not found, let engine fallback search handle it
+      }
+
+      // For plain continuation with no explicit historical turn, attach to the most recent session
+      if (isContinuation && !executeRequest.sessionId) {
+        const sessions = this.services.sessionManager?.sessions || {};
+        let bestSid = null;
+        let bestTs = -1;
+        for (const [sid, s] of Object.entries(sessions)) {
+          const ts = Number(s?.lastActivity) || 0;
+          if (ts > bestTs) { bestTs = ts; bestSid = sid; }
+        }
+        if (bestSid) {
+          executeRequest.sessionId = bestSid;
+          console.warn(`[ConnectionHandler] Relocated continuation request to session ${bestSid}`);
+        }
+      }
+    } catch (e) {
+      // Non-fatal; continue as-is
     }
   }
 

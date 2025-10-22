@@ -18,6 +18,7 @@ import { WorkflowCompiler } from "./core/workflow-compiler.js";
 import { SWBootstrap } from "./HTOS/ServiceWorkerBootstrap.js";
 import { ClaudeAdapter } from "./providers/claude-adapter.js";
 import { GeminiAdapter } from "./providers/gemini-adapter.js";
+import { GeminiProAdapter } from "./providers/gemini-pro-adapter.js";
 import { ChatGPTAdapter } from "./providers/chatgpt-adapter.js";
 import { QwenAdapter } from "./providers/qwen-adapter.js";
 import { ClaudeProviderController } from "./providers/claude.js";
@@ -211,7 +212,8 @@ class FaultTolerantOrchestrator {
       onPartial = () => {},
       onAllComplete = () => {},
       useThinking = false,
-      providerContexts = {}
+      providerContexts = {},
+      providerMeta = {}
     } = options;
 
     if (this.lifecycleManager) this.lifecycleManager.keepalive(true);
@@ -245,7 +247,11 @@ class FaultTolerantOrchestrator {
         const request = {
           originalPrompt: prompt,
           sessionId,
-          meta: { ...(providerContexts[providerId]?.meta || {}), useThinking }
+          meta: {
+            ...(providerContexts[providerId]?.meta || {}),
+            ...(providerMeta?.[providerId] || {}),
+            useThinking
+          }
         };
 
         try {
@@ -341,6 +347,7 @@ async function initializeProviders() {
   const providerConfigs = [
     { name: 'claude', Controller: ClaudeProviderController, Adapter: ClaudeAdapter },
     { name: 'gemini', Controller: GeminiProviderController, Adapter: GeminiAdapter },
+    { name: 'gemini-pro', Controller: GeminiProviderController, Adapter: GeminiProAdapter },
     { name: 'chatgpt', Controller: ChatGPTProviderController, Adapter: ChatGPTAdapter },
     { name: 'qwen', Controller: QwenProviderController, Adapter: QwenAdapter },
   ];

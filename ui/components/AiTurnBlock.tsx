@@ -2,7 +2,7 @@ import { AiTurn, ProviderResponse, AppStep } from '../types';
 import ProviderResponseBlock from './ProviderResponseBlock';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { hasComposableContent } from '../utils/composerUtils';
 import { LLM_PROVIDERS_CONFIG } from '../constants';
 import ClipsCarousel from './ClipsCarousel';
@@ -128,9 +128,16 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                 (() => {
                   const take = getLatestTake(synthesisResponses[activeSynthPid]);
                   if (!take) return <div style={{ color: '#64748b' }}>No synthesis yet for this model.</div>;
+                  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    try { await navigator.clipboard.writeText(String(take.text || '')); } catch (err) { console.error('Copy failed', err); }
+                  }, [take?.text]);
                   return (
                     <div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeSynthPid} · {take.status}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{activeSynthPid} · {take.status}</div>
+                        <button onClick={handleCopy} style={{ background: '#334155', border: '1px solid #475569', borderRadius: 6, padding: '4px 8px', color: '#94a3b8', fontSize: 12, cursor: 'pointer' }}>📋 Copy</button>
+                      </div>
                       <div className="prose prose-sm max-w-none dark:prose-invert" style={{ lineHeight: 1.7, fontSize: 16 }}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {String(take.text || '')}
@@ -170,9 +177,16 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                 (() => {
                   const take = getLatestTake(mappingResponses[activeMappingPid]);
                   if (!take) return <div style={{ color: '#64748b' }}>No mapping yet for this model.</div>;
+                  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    try { await navigator.clipboard.writeText(String(take.text || '')); } catch (err) { console.error('Copy failed', err); }
+                  }, [take?.text]);
                   return (
                     <div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{activeMappingPid} · {take.status}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{activeMappingPid} · {take.status}</div>
+                        <button onClick={handleCopy} style={{ background: '#334155', border: '1px solid #475569', borderRadius: 6, padding: '4px 8px', color: '#94a3b8', fontSize: 12, cursor: 'pointer' }}>📋 Copy</button>
+                      </div>
                       <div className="prose prose-sm max-w-none dark:prose-invert" style={{ lineHeight: 1.7, fontSize: 16 }}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {String(take.text || '')}
