@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { VirtualizedTimeline } from './VirtualizedTimeline';
+import { VirtualizedHorizontalTimeline } from './VirtualizedHorizontalTimeline';
 import { FocusPaneV2 } from './FocusPaneV2';
 import type { ChatTurn, ResponseBlock } from '../../types/chat';
 
@@ -11,6 +11,8 @@ interface SourcePanelProps {
   onTurnSelect: (turn: ChatTurn) => void;
   onResponseSelect?: (response: ResponseBlock) => void;
   onDragStart: (data: any) => void;
+  currentTurnIndex: number;
+  onTurnExpand: (index: number) => void;
   className?: string;
 }
 
@@ -21,6 +23,8 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   onTurnSelect,
   onResponseSelect,
   onDragStart,
+  currentTurnIndex,
+  onTurnExpand,
   className = '',
 }) => {
   return (
@@ -138,22 +142,17 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
           style={{
             flex: 1,
             overflow: 'hidden',
+            padding: '8px',
           }}
         >
-          <VirtualizedTimeline
+          <VirtualizedHorizontalTimeline
             turns={turns}
-            focusedId={selectedTurn?.id ?? null}
-            onSelect={(turnId) => {
-              const turn = turns.find((t) => t.id === turnId);
+            currentTurnIndex={currentTurnIndex}
+            onTurnSelect={(index) => {
+              const turn = turns[index];
               if (turn) onTurnSelect(turn);
             }}
-            onResponseSelect={(turnId, responseId) => {
-              const turn = turns.find((t) => t.id === turnId);
-              const response = turn?.responses.find((r) => r.id === responseId);
-              if (response && onResponseSelect) {
-                onResponseSelect(response);
-              }
-            }}
+            onTurnExpand={onTurnExpand}
           />
         </div>
       </div>

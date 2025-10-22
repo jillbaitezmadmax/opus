@@ -7,6 +7,9 @@ import { TurnMessage, AiTurn } from '../../types';
 import ComposerToolbar from './ComposerToolbar';
 import SourcePanel from './SourcePanel';
 import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
+import { ExpandedTurnOverlay } from './ExpandedTurnOverlay';
+import { DragData, isValidDragData } from '../../types/dragDrop';
+import { ProvenanceData } from './extensions/ComposedContentNode';
 
 // Import the CanvasEditorRef type from CanvasEditorV2
 import { CanvasEditorRef } from './CanvasEditorV2';
@@ -30,6 +33,10 @@ export const ComposerModeV2: React.FC<ComposerModeV2Props> = ({
   const [selectedResponse, setSelectedResponse] = useState<ResponseBlock | undefined>();
   const [isDragging, setIsDragging] = useState(false);
   const [dragData, setDragData] = useState<any>();
+  
+  // New state for horizontal timeline and expanded overlay
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [expandedTurnIndex, setExpandedTurnIndex] = useState<number | null>(null);
 
   const turns = useMemo(() => convertTurnMessagesToChatTurns(allTurns), [allTurns]);
 
@@ -43,13 +50,46 @@ export const ComposerModeV2: React.FC<ComposerModeV2Props> = ({
     setIsDragging(true);
   }, []);
 
-  const handleDragEnd = useCallback(() => {
+  const handleDragEnd = useCallback((event: any) => {
+    const { active, over } = event;
+    
+    // Handle segment drops to canvas
+    if (over?.id === 'canvas-dropzone' && active?.data?.current) {
+      const dragData: DragData = active.data.current;
+      
+      if (isValidDragData(dragData) && dragData.type === 'content_block') {
+        const provenance: ProvenanceData = {
+          turnId: dragData.metadata.turnId,
+          responseId: dragData.metadata.responseId,
+          blockId: dragData.metadata.blockId,
+          providerId: dragData.metadata.providerId,
+          granularity: dragData.metadata.granularity,
+          timestamp: new Date().toISOString(),
+        };
+        
+        editorRef.current?.insertComposedContent(
+          dragData.content,
+          provenance
+        );
+      }
+    }
+    
     setActiveDragData(null);
     setIsDragging(false);
   }, []);
 
-  const handleTurnSelect = useCallback((turn: ChatTurn) => {
-    setSelectedTurn(turn);
+  // Timeline navigation handlers
+  const handleTurnSelect = useCallback((index: number) => {
+    setCurrentTurnIndex(index);
+    setSelectedTurn(turns[index] || null);
+  }, [turns]);
+
+  const handleTurnExpand = useCallback((index: number) => {
+    setExpandedTurnIndex(index);
+  }, []);
+
+  const handleCloseExpanded = useCallback(() => {
+    setExpandedTurnIndex(null);
   }, []);
 
   const handleResponseSelect = useCallback((response: ResponseBlock) => {
@@ -83,9 +123,14 @@ export const ComposerModeV2: React.FC<ComposerModeV2Props> = ({
                 allTurns={allTurns}
                 selectedTurn={selectedTurn || undefined}
                 selectedResponse={selectedResponse}
-                onTurnSelect={handleTurnSelect}
+                onTurnSelect={(turn: ChatTurn) => {
+                  const index = turns.findIndex(t => t.id === turn.id);
+                  if (index !== -1) handleTurnSelect(index);
+                }}
                 onResponseSelect={handleResponseSelect}
                 onDragStart={handleBlockDragStart}
+                currentTurnIndex={currentTurnIndex}
+                onTurnExpand={handleTurnExpand}
               />
             </Panel>
             
@@ -117,6 +162,17 @@ export const ComposerModeV2: React.FC<ComposerModeV2Props> = ({
           </DragOverlay>
         </DndContext>
       </div>
+
+      {/* Expanded Turn Overlay */}
+      {expandedTurnIndex !== null && (
+        <ExpandedTurnOverlay
+          turn={turns[expandedTurnIndex]}
+          turnIndex={expandedTurnIndex}
+          totalTurns={turns.length}
+          onClose={handleCloseExpanded}
+          onNavigate={handleTurnSelect}
+        />
+      )}
 
       <style>{`
         .source-panel,
