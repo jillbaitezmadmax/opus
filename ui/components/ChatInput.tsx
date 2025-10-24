@@ -34,6 +34,30 @@ const ChatInput = ({
   const [saved, setSaved] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const CHAT_INPUT_STORAGE_KEY = 'htos_chatinput_prompt';
+
+  // Restore saved prompt on mount
+  useEffect(() => {
+    try {
+      const savedPrompt = localStorage.getItem(CHAT_INPUT_STORAGE_KEY);
+      if (savedPrompt) {
+        setPrompt(savedPrompt);
+      }
+    } catch {}
+  }, []);
+
+  // Persist prompt on change (clear when empty)
+  useEffect(() => {
+    try {
+      const value = prompt.trim();
+      if (value) {
+        localStorage.setItem(CHAT_INPUT_STORAGE_KEY, value);
+      } else {
+        localStorage.removeItem(CHAT_INPUT_STORAGE_KEY);
+      }
+    } catch {}
+  }, [prompt]);
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'; // Reset height
@@ -58,6 +82,7 @@ const ChatInput = ({
       onSendPrompt(trimmed);
     }
     setPrompt("");
+    try { localStorage.removeItem(CHAT_INPUT_STORAGE_KEY); } catch {}
     setSaved(true);
     setTimeout(() => setSaved(false), 600);
   };
@@ -178,7 +203,7 @@ const ChatInput = ({
         {showMappingBtn && (
           <button
             type="button"
-            onClick={() => { onStartMapping?.(prompt.trim()); setPrompt(""); }}
+            onClick={() => { onStartMapping?.(prompt.trim()); setPrompt(""); try { localStorage.removeItem(CHAT_INPUT_STORAGE_KEY); } catch {} }}
             disabled={isLoading || mappingActive}
             title={mappingTooltip || 'Mapping with selected models'}
             style={{

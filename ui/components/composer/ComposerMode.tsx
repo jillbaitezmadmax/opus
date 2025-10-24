@@ -1,22 +1,15 @@
-import { useMemo, useCallback, useState, useEffect } from 'react';
-import { createEditor, Transforms, Editor, Element as SlateElement, BaseEditor } from 'slate';
-import { Slate, Editable, withReact, ReactEditor } from 'slate-react';
-import { DndContext, DragEndEvent, PointerSensor, KeyboardSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
-import { v4 as uuidv4 } from 'uuid';
-import type { AiTurn, TurnMessage, SlateDescendant, GranularUnit, ComposerState, DocumentRecord } from '../../types';
-import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
-import { GhostData } from '../../types/dragDrop';
-import { extractComposableContent, serializeToPlainText } from '../../utils/composerUtils';
-import { useComposerReducer } from '../../hooks/useComposerReducer';
-import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
+import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor } from '@dnd-kit/core';
+import { CanvasEditorV2 } from './CanvasEditorV2';
+import { CanvasEditorRef } from './CanvasEditorV2';
+import { TurnMessage, AiTurn } from '../../types';
 import ComposerToolbar from './ComposerToolbar';
-import SourcePanel from './SourcePanel';
-import CanvasEditor from './CanvasEditor';
-import GhostLayer from './GhostLayer';
-import { ComposerModeV2 } from './ComposerModeV2';
-
-// Feature flag for new composer mode
-const USE_NEW_COMPOSER = true;
+import HorizontalChatRail from './HorizontalChatRail';
+import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
+import { DragData, isValidDragData } from '../../types/dragDrop';
+import { ProvenanceData } from './extensions/ComposedContentNode';
+import ResponseViewer from './ResponseViewer';
+import { Granularity } from '../../utils/segmentText';
 
 interface ComposerModeProps {
   allTurns: TurnMessage[];
@@ -25,396 +18,183 @@ interface ComposerModeProps {
   onUpdateAiTurn?: (aiTurnId: string, updates: Partial<AiTurn>) => void;
 }
 
-// Slate plugin for composer-specific behavior
-const withComposer = (editor: ReactEditor) => {
-  const { insertData, normalizeNode } = editor;
-  
-  // Handle paste events
-  editor.insertData = (data: DataTransfer) => {
-    const text = data.getData('text/plain');
-    if (text) {
-      Transforms.insertText(editor, text);
-      return;
-    }
-    insertData(data);
-  };
-  
-  // Normalize composed nodes
-  editor.normalizeNode = (entry) => {
-    const [node, path] = entry;
-    
-    // Ensure composed-content nodes maintain metadata
-    if ('type' in node && node.type === 'composed-content') {
-      if (!('metadata' in node) || !node.metadata) {
-        Transforms.setNodes(
-          editor,
-          { metadata: { granularity: 'unknown' } },
-          { at: path }
-        );
-      }
-    }
-    
-    normalizeNode(entry);
-  };
-  
-  return editor;
-};
+export const ComposerMode: React.FC<ComposerModeProps> = ({
+  allTurns,
+  sessionId,
+  onExit,
+  onUpdateAiTurn
+}) => {
+  const editorRef = useRef<CanvasEditorRef>(null);
+  const [activeDragData, setActiveDragData] = useState<any>(null);
+  const [selectedTurn, setSelectedTurn] = useState<ChatTurn | null>(null);
+  const [selectedResponse, setSelectedResponse] = useState<ResponseBlock | undefined>();
+  const [isDragging, setIsDragging] = useState(false);
+  const [granularity, setGranularity] = useState<Granularity>('paragraph');
 
-const ComposerMode = ({ allTurns, sessionId, onExit, onUpdateAiTurn }: ComposerModeProps) => {
-  // Feature flag check - return new composer if enabled
-  if (USE_NEW_COMPOSER) {
-    return (
-      <ComposerModeV2
-        allTurns={allTurns}
-        sessionId={sessionId}
-        onExit={onExit}
-        onUpdateAiTurn={onUpdateAiTurn}
-      />
-    );
-  }
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
 
-  // State for focused turn in navigation
-  const [focusedTurnId, setFocusedTurnId] = useState<string | null>(null);
-  
-  // Document persistence state
-  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isLoadingDoc, setIsLoadingDoc] = useState(true);
-  const [lastSaved, setLastSaved] = useState<number>(0);
-  
-  // Find the focused turn or default to the last AI turn
-  const focusedTurn = useMemo(() => {
-    if (focusedTurnId) {
-      const turn = allTurns.find(t => t.id === focusedTurnId);
-      if (turn && turn.type === 'ai') return turn as AiTurn;
-    }
-    // Default to last AI turn
-    const lastAiTurn = [...allTurns].reverse().find(t => t.type === 'ai') as AiTurn | undefined;
-    return lastAiTurn || null;
-  }, [allTurns, focusedTurnId]);
+  const turns = useMemo(() => convertTurnMessagesToChatTurns(allTurns), [allTurns]);
 
-  // State management with useReducer - use focused turn's composer state
-  const { state: composerState, actions } = useComposerReducer(focusedTurn?.composerState);
-  
-  // Document persistence functions
-  const saveDocument = useCallback(async () => {
-    if (!sessionId || isSaving) return;
-    
-    setIsSaving(true);
-    try {
-      const documentId = currentDocumentId || uuidv4();
-      const document: DocumentRecord = {
-        id: documentId,
-        title: `Document ${new Date().toLocaleDateString()}`,
-        sourceSessionId: sessionId,
-        canvasContent: composerState.canvasContent,
-        granularity: composerState.granularity,
-        isDirty: false,
-        createdAt: currentDocumentId ? Date.now() : Date.now(),
-        lastModified: Date.now(),
-        updatedAt: Date.now(),
-        version: 1,
-        blockCount: composerState.canvasContent.length,
-        refinementHistory: [],
-        exportHistory: [],
-        snapshots: [],
-        _tempStorage: false
-      };
-      
-      await enhancedDocumentStore.saveDocument(document);
-      setCurrentDocumentId(documentId);
-      actions.markSaved();
-      setLastSaved(Date.now());
-    } catch (error) {
-      console.error('Failed to save document:', error);
-    } finally {
-      setIsSaving(false);
-    }
-  }, [sessionId, currentDocumentId, composerState, actions, isSaving]);
-  
-  const loadDocument = useCallback(async (documentId: string) => {
-    try {
-      const document = await enhancedDocumentStore.loadDocument(documentId);
-      if (document) {
-        actions.setCanvasContent(document.canvasContent as any);
-        actions.setGranularity(document.granularity);
-        setCurrentDocumentId(document.id);
-        actions.markSaved();
-      }
-    } catch (error) {
-      console.error('Failed to load document:', error);
-    }
-  }, [actions]);
-
-  // Document initialization effect
-  useEffect(() => {
-    const initDocument = async () => {
-      setIsLoadingDoc(true);
-      try {
-        if (focusedTurn?.composerState?.documentId) {
-          const doc = await enhancedDocumentStore.loadDocument(focusedTurn.composerState.documentId);
-          if (doc) {
-            actions.setCanvasContent(doc.canvasContent as any);
-            actions.setGranularity(doc.granularity);
-            setCurrentDocumentId(doc.id);
-            actions.markSaved();
-            // Load existing ghosts for this document
-            try {
-              const ghosts = await enhancedDocumentStore.getDocumentGhosts(doc.id);
-              (ghosts || []).forEach((g: any) => actions.addGhost(g));
-            } catch {}
-            setIsLoadingDoc(false);
-            return;
-          }
-        }
-
-        // No document exists - create new one
-        const newDoc = await enhancedDocumentStore.createDocument(
-          `Composition from ${new Date().toLocaleDateString()}`,
-          sessionId || undefined,
-          [{ type: 'paragraph', children: [{ text: '' }] }]
-        );
-        setCurrentDocumentId(newDoc.id);
-
-        // Link document ID back to the focused AI turn
-        if (onUpdateAiTurn && focusedTurn) {
-          const defaultComposerState: ComposerState = {
-            canvasContent: [{ type: 'paragraph', children: [{ text: '' }] }],
-            granularity: 'paragraph',
-            sourceMap: {},
-            isDirty: false,
-            createdAt: Date.now(),
-            lastModified: Date.now(),
-            refinementHistory: [],
-            exportHistory: [],
-            ghosts: [],
-            content: [{ type: 'paragraph', children: [{ text: '' }] }]
-          };
-          
-          onUpdateAiTurn(focusedTurn.id, {
-            composerState: {
-              ...defaultComposerState,
-              ...(focusedTurn.composerState || {}),
-              documentId: newDoc.id
-            }
-          });
-        }
-      } catch (error) {
-        console.error('[Composer] Document init failed:', error);
-      } finally {
-        setIsLoadingDoc(false);
-      }
-    };
-
-    initDocument();
-  }, [focusedTurn?.id, sessionId]);
-  
-  // Debounced auto-save effect
-  useEffect(() => {
-    if (!composerState.isDirty || !sessionId || isSaving) return;
-    
-    const autoSaveTimer = setTimeout(() => {
-      saveDocument();
-    }, 2000); // Auto-save after 2 seconds of inactivity
-    
-    return () => clearTimeout(autoSaveTimer);
-  }, [composerState.isDirty, composerState.lastModified, sessionId, isSaving, saveDocument]);
-  
-  // Initialize Slate editor
-  const editor = useMemo(() => withComposer(withReact(createEditor())), []);
-  
-  // Extract composable sources from focused AI turn
-  const sources = useMemo(() => focusedTurn ? extractComposableContent(focusedTurn) : [], [focusedTurn]);
-  
-  // Drag and drop sensors
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // 8px movement required before drag starts
-      },
-    }),
-    useSensor(KeyboardSensor)
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { distance: 5 } })
   );
-  
-  // Handle drag end
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-    const dragData = active.data.current;
-    if (!dragData) return;
 
-    // Handle ghost drag from GhostLayer
-    if (dragData?.ghost) {
-      const ghost = dragData.ghost as any; // Ghost
-      const newNode: SlateDescendant = {
-        type: 'composed-content',
-        children: [{ text: ghost.text }],
-        provenance: ghost.provenance,
-        metadata: {
-          granularity: 'full',
-          timestamp: Date.now()
-        }
-      } as any;
-      Transforms.insertNodes(editor, newNode, { at: [editor.children.length] });
-      actions.setDirty(true);
-      return;
-    }
-
-    // Handle unit drag from FocusPane with provenance
-    if (dragData?.unit && dragData?.provenance) {
-      const { unit, provenance } = dragData as any;
-      const newNode: SlateDescendant = {
-        type: 'composed-content',
-        children: [{ text: unit.text }],
-        provenance,
-        metadata: {
-          granularity: unit.type,
-          timestamp: Date.now()
-        }
-      } as any;
-      Transforms.insertNodes(editor, newNode, { at: [editor.children.length] });
-      actions.setDirty(true);
-      return;
-    }
-  }, [editor, actions]);
-  
-  // Handle canvas content change
-  const handleCanvasChange = useCallback((newContent: SlateDescendant[]) => {
-    actions.setCanvasContent(newContent);
-  }, [actions]);
-  
-  // Save composer state
-  const handleSave = useCallback(() => {
-    if (onUpdateAiTurn && focusedTurn) {
-      const stateToSave = {
-        ...composerState,
-        lastModified: Date.now(),
-      };
-      
-      onUpdateAiTurn(focusedTurn.id, { composerState: stateToSave });
-      actions.markSaved();
-    }
-  }, [composerState, focusedTurn, onUpdateAiTurn, actions]);
-  
-  // Handle export
-  const handleExport = useCallback(async () => {
-    const plainText = serializeToPlainText(composerState.canvasContent);
-    
-    try {
-      await navigator.clipboard.writeText(plainText);
-      // TODO: Show success notification
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
-      // TODO: Show error notification
-    }
-    
-    // Track export in history
-    if (plainText) {
-      actions.addExport({
-        id: uuidv4(),
-        timestamp: Date.now(),
-        format: 'text',
-        content: plainText,
-        metadata: {
-          snapshot: plainText.substring(0, 200),
-        },
-      });
-    }
-  }, [composerState.canvasContent, actions]);
-  
-  // Handle refinement (placeholder for Phase 3)
-  const handleRefine = useCallback(async () => {
-    // TODO: Implement refinement in Phase 3
-    console.log('Refinement feature coming in Phase 3');
+  const handleDragStart = useCallback((event: any) => {
+    setActiveDragData(event.active.data.current);
+    setIsDragging(true);
   }, []);
-  
+
+  const handleDragEnd = useCallback((event: any) => {
+    const { active, over } = event;
+
+    if (over?.id === 'canvas-dropzone' && active?.data?.current) {
+      const payload = active.data.current;
+
+      if (payload?.type === 'composer-block' && payload?.text && payload?.provenance) {
+        const prov: ProvenanceData = {
+          ...payload.provenance,
+          timestamp: typeof payload.provenance.timestamp === 'number' ? payload.provenance.timestamp : Date.now(),
+        };
+        editorRef.current?.insertComposedContent(payload.text, prov);
+      } else {
+        const dragData: DragData = payload;
+        if (isValidDragData(dragData)) {
+          const mapGranularity = (g: DragData['metadata']['granularity']): ProvenanceData['granularity'] => {
+            switch (g) {
+              case 'paragraph': return 'paragraph';
+              case 'sentence': return 'sentence';
+              case 'word':
+              case 'phrase': return 'sentence';
+              case 'response':
+              case 'turn':
+              default: return 'full';
+            }
+          };
+
+          const provenance: ProvenanceData = {
+            sessionId: sessionId || 'current',
+            aiTurnId: dragData.metadata.turnId,
+            providerId: dragData.metadata.providerId,
+            responseType: 'batch',
+            responseIndex: 0,
+            timestamp: Date.now(),
+            granularity: mapGranularity(dragData.metadata.granularity),
+            sourceText: dragData.content,
+            sourceContext: dragData.metadata.sourceContext ? { fullResponse: dragData.metadata.sourceContext.fullResponse } : undefined,
+          } as ProvenanceData;
+
+          editorRef.current?.insertComposedContent(
+            dragData.content,
+            provenance
+          );
+        }
+      }
+    }
+
+    setActiveDragData(null);
+    setIsDragging(false);
+  }, []);
+
+  const handleTurnSelect = useCallback((index: number) => {
+    setCurrentTurnIndex(index);
+    setSelectedTurn(turns[index] || null);
+    setSelectedResponse(undefined);
+  }, [turns]);
+
+  const handleResponsePickFromRail = useCallback((turnIndex: number, providerId: string, content: string) => {
+    const turn = turns[turnIndex];
+    if (!turn) return;
+    setCurrentTurnIndex(turnIndex);
+    setSelectedTurn(turn);
+    const resp: ResponseBlock | undefined = turn.responses.find(r => r.providerId === providerId) || {
+      id: `${turn.id}-picked-${providerId}`,
+      content,
+      providerId,
+    } as ResponseBlock;
+    setSelectedResponse(resp);
+  }, [turns]);
+
   return (
-    <div
-      className="composer-mode-container"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: '#0f172a',
-        zIndex: 1000,
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {isLoadingDoc && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: '#0f172a',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#e2e8f0',
-          fontSize: '16px'
-        }}>
-          Loading document...
-        </div>
-      )}
-      <ComposerToolbar
-        granularity={composerState.granularity}
-        onGranularityChange={actions.setGranularity}
+    <div style={{ height: '100vh', maxHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box', padding: '8px 0', overflowX: 'hidden'}}>
+      <ComposerToolbar 
+        editorRef={editorRef}
         onExit={onExit}
-        onSave={saveDocument}
-        onExport={handleExport}
-        isDirty={composerState.isDirty}
-        isSaving={isSaving}
-        editorRef={{ current: editor }}
+        isDirty={false}
       />
-      
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
-        <div
-          className="composer-split-view"
-          style={{
-            flex: 1,
-            display: 'flex',
-            overflow: 'hidden',
-            gap: '16px',
-            padding: '16px',
-          }}
+
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
         >
-          <SourcePanel
-  turns={convertTurnMessagesToChatTurns(allTurns)} // ✅ Right prop name + conversion
-  allTurns={allTurns}
-  selectedTurn={undefined}
-  selectedResponse={undefined}
-  onTurnSelect={(turn) => {}}
-  onResponseSelect={(response) => {}}
-  onDragStart={(ghostData: GhostData) => {
-    actions.addGhost({ ...ghostData, order: composerState.ghosts.length });
-  }}
-/>
-          
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <CanvasEditor
-              editor={editor}
-              value={composerState.canvasContent}
-              onChange={handleCanvasChange}
-              onRefine={handleRefine}
-            />
-            
-            <GhostLayer
-              ghosts={composerState.ghosts}
-              onRemoveGhost={actions.removeGhost}
-            />
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12, padding: '0 12px', width: '100%' }}>
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <ResponseViewer
+                turn={selectedTurn || turns[currentTurnIndex] || null}
+                response={selectedResponse}
+                granularity={granularity}
+                onGranularityChange={setGranularity}
+              />
+            </div>
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <CanvasEditorV2
+                ref={editorRef}
+                placeholder="Drag content here to compose..."
+                onChange={() => {}}
+              />
+            </div>
           </div>
-        </div>
-      </DndContext>
+
+          <DragOverlay>
+            {isDragging && activeDragData && (
+              <div style={{
+                background: '#1e293b',
+                border: '1px solid #8b5cf6',
+                borderRadius: '8px',
+                padding: '12px',
+                maxWidth: '300px',
+                color: '#e2e8f0',
+                fontSize: '13px',
+              }}>
+                {(activeDragData.text || activeDragData.content || '').toString().substring(0, 100)}...
+              </div>
+            )}
+          </DragOverlay>
+        </DndContext>
+        <HorizontalChatRail
+          turns={turns}
+          allTurns={allTurns}
+          currentStepIndex={currentTurnIndex}
+          onStepSelect={(idx) => handleTurnSelect(idx)}
+          onStepHover={(idx) => {
+            if (typeof idx === 'number') {
+              setCurrentTurnIndex(idx);
+              setSelectedTurn(turns[idx] || null);
+            }
+          }}
+          onStepExpand={(idx) => setCurrentTurnIndex(idx)}
+          onResponsePick={handleResponsePickFromRail}
+        />
+      </div>
+
+      <style>{`
+        .source-panel,
+        .canvas-panel {
+          height: 100%;
+          border-radius: 8px;
+          background-color: #1e293b;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          display: flex;
+          flex-direction: column;
+        }
+
+        .canvas-panel {
+          flex-grow: 1;
+          position: relative;
+        }
+      `}</style>
     </div>
   );
 };
-
-export default ComposerMode;

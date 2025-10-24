@@ -3,6 +3,7 @@ import { ChatTurn } from '../../types/chat';
 import { Granularity, segmentText } from '../../utils/segmentText';
 import { DraggableSegment } from './DraggableSegment';
 import { ProvenanceData } from './extensions/ComposedContentNode';
+import { FocusPaneV2 } from './FocusPaneV2';
 
 interface ExpandedTurnOverlayProps {
   turn: ChatTurn;
@@ -10,6 +11,12 @@ interface ExpandedTurnOverlayProps {
   prevTurn?: ChatTurn;
   nextTurn?: ChatTurn;
   onNavigate: (direction: 'prev' | 'next') => void;
+  // If inline is true the overlay will render without the backdrop and will
+  // reuse the FocusPaneV2 component/styling so it can be embedded to the
+  // left of the canvas. An optional onDragStart handler is forwarded to
+  // FocusPaneV2 so drags from the inline view are handled by the composer.
+  inline?: boolean;
+  onDragStart?: (data: any) => void;
 }
 
 const getProviderColor = (providerId: string): string => {
@@ -28,7 +35,9 @@ export const ExpandedTurnOverlay: React.FC<ExpandedTurnOverlayProps> = ({
   onClose,
   prevTurn,
   nextTurn,
-  onNavigate
+  onNavigate,
+  inline = false,
+  onDragStart,
 }) => {
   const [granularity, setGranularity] = useState<Granularity>('paragraph');
   const [selectedResponseId, setSelectedResponseId] = useState<string>(
@@ -43,12 +52,14 @@ export const ExpandedTurnOverlay: React.FC<ExpandedTurnOverlayProps> = ({
   }, [displayContent, granularity]);
 
   const provenance: ProvenanceData = {
-    turnId: turn.id,
-    responseId: selectedResponse?.id,
+    sessionId: turn.sessionId || 'current',
+    aiTurnId: turn.id,
     providerId: turn.type === 'user' ? 'user' : (selectedResponse?.providerId || turn.providerId || 'unknown'),
-    timestamp: turn.timestamp,
-    sessionId: turn.sessionId
-  };
+    responseType: selectedResponse ? 'batch' : 'hidden',
+    responseIndex: selectedResponse ? (turn.responses.findIndex(r => r.id === selectedResponse.id) || 0) : 0,
+    timestamp: turn.timestamp || Date.now(),
+    granularity: 'full'
+  } as ProvenanceData;
 
   const sourceContext = {
     fullResponse: displayContent,
@@ -70,6 +81,23 @@ export const ExpandedTurnOverlay: React.FC<ExpandedTurnOverlayProps> = ({
   useEffect(() => {
     setSelectedResponseId(turn.responses[0]?.id || '');
   }, [turn.id]);
+
+  // If inline mode is requested, reuse the FocusPaneV2 component (cleaner
+  // styling) and render without the full-screen backdrop so this component
+  // can be embedded to the left of the canvas panel.
+  if (inline) {
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <FocusPaneV2
+          turn={turn}
+          selectedResponseId={selectedResponseId}
+          // Forward drag start events so ComposerModeV2 can insert content
+          onDragStart={(data: any) => onDragStart?.(data)}
+          className="expanded-inline-focuspane"
+        />
+      </div>
+    );
+  }
 
   const TurnCard: React.FC<{ turn: ChatTurn; isMini: boolean; onClick: () => void }> = ({ 
     turn, 

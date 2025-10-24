@@ -14,6 +14,9 @@ interface SourcePanelProps {
   currentTurnIndex: number;
   onTurnExpand: (index: number) => void;
   className?: string;
+  showTimeline?: boolean;
+  // When false the top Focus pane will be hidden (used when inline overlay is shown)
+  showFocus?: boolean;
 }
 
 export const SourcePanel: React.FC<SourcePanelProps> = ({
@@ -26,6 +29,8 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   currentTurnIndex,
   onTurnExpand,
   className = '',
+  showTimeline = true,
+  showFocus = true,
 }) => {
   return (
     <div
@@ -39,37 +44,96 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         overflow: 'hidden',
       }}
     >
-      {/* Focus Pane - Top 40% */}
-      <div
-        className="focus-pane-container"
-        style={{
-          height: '40%',
-          minHeight: '200px',
-          borderBottom: '2px solid #334155',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          background: '#1e293b',
-        }}
-      >
-        {/* Focus Pane Header */}
+      {/* Focus Pane - Top 40% (can be hidden when embedding inline overlay) */}
+      {showFocus && (
         <div
+          className="focus-pane-container"
           style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #334155',
+            height: showTimeline ? '40%' : '100%',
+            minHeight: '200px',
+            borderBottom: '2px solid #334155',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
             background: '#1e293b',
           }}
         >
+          {/* Focus Pane Header */}
           <div
             style={{
-              fontSize: '14px',
-              fontWeight: 600,
-              color: '#e2e8f0',
+              padding: '12px 16px',
+              borderBottom: '1px solid #334155',
+              background: '#1e293b',
             }}
           >
-            Focus View
+            <div
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#e2e8f0',
+              }}
+            >
+              Focus View
+            </div>
+            {selectedTurn && (
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                  marginTop: '4px',
+                }}
+              >
+                Turn {selectedTurn.id} • {selectedTurn.responses.length} response
+                {selectedTurn.responses.length !== 1 ? 's' : ''}
+              </div>
+            )}
           </div>
-          {selectedTurn && (
+
+          {/* Focus Pane Content */}
+          <div
+            style={{
+              flex: 1,
+              overflow: 'hidden',
+            }}
+          >
+            <FocusPaneV2
+              turn={selectedTurn ?? null}
+              selectedResponseId={selectedResponse?.id}
+              onDragStart={onDragStart}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Timeline Rail - Bottom 60% (optional, can be hidden when global rail is used) */}
+      {showTimeline && (
+        <div
+          className="timeline-container"
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            background: '#0f172a',
+          }}
+        >
+          {/* Timeline Header */}
+          <div
+            style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid #334155',
+              background: '#1e293b',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#e2e8f0',
+              }}
+            >
+              Timeline Rail
+            </div>
             <div
               style={{
                 fontSize: '11px',
@@ -77,85 +141,30 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
                 marginTop: '4px',
               }}
             >
-              Turn {selectedTurn.id} • {selectedTurn.responses.length} response
-              {selectedTurn.responses.length !== 1 ? 's' : ''}
+              {turns.length} turn{turns.length !== 1 ? 's' : ''} • Scroll or click to focus
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Focus Pane Content */}
-        <div
-          style={{
-            flex: 1,
-            overflow: 'hidden',
-          }}
-        >
-          <FocusPaneV2
-            turn={selectedTurn ?? null}
-            selectedResponseId={selectedResponse?.id}
-            onDragStart={onDragStart}
-          />
-        </div>
-      </div>
-
-      {/* Timeline Rail - Bottom 60% */}
-      <div
-        className="timeline-container"
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          background: '#0f172a',
-        }}
-      >
-        {/* Timeline Header */}
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #334155',
-            background: '#1e293b',
-          }}
-        >
+          {/* Timeline Content */}
           <div
             style={{
-              fontSize: '14px',
-              fontWeight: 600,
-              color: '#e2e8f0',
+              flex: 1,
+              overflow: 'hidden',
+              padding: '8px',
             }}
           >
-            Timeline Rail
-          </div>
-          <div
-            style={{
-              fontSize: '11px',
-              color: '#64748b',
-              marginTop: '4px',
-            }}
-          >
-            {turns.length} turn{turns.length !== 1 ? 's' : ''} • Scroll or click to focus
+            <VirtualizedHorizontalTimeline
+              turns={turns}
+              currentTurnIndex={currentTurnIndex}
+              onTurnSelect={(index) => {
+                const turn = turns[index];
+                if (turn) onTurnSelect(turn);
+              }}
+              onTurnExpand={onTurnExpand}
+            />
           </div>
         </div>
-
-        {/* Timeline Content */}
-        <div
-          style={{
-            flex: 1,
-            overflow: 'hidden',
-            padding: '8px',
-          }}
-        >
-          <VirtualizedHorizontalTimeline
-            turns={turns}
-            currentTurnIndex={currentTurnIndex}
-            onTurnSelect={(index) => {
-              const turn = turns[index];
-              if (turn) onTurnSelect(turn);
-            }}
-            onTurnExpand={onTurnExpand}
-          />
-        </div>
-      </div>
+      )}
     </div>
   );
 };

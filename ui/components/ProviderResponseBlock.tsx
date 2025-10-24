@@ -278,8 +278,13 @@ const ProviderResponseBlock = ({
                         borderRadius: '12px',
                         padding: '16px',
                         minHeight: blockMinHeight,
+                        flexShrink: 0,
                         display: 'flex',
                         flexDirection: 'column',
+                        // Improve paint/isolation during streaming to reduce jank
+                        contentVisibility: 'auto' as any,
+                        contain: 'layout paint' as any,
+                        containIntrinsicSize: '280px 120px',
                         ...transitionStyle,
                         ...(isExpanded && { background: '#293548' })
                       }}
@@ -399,29 +404,31 @@ const ProviderResponseBlock = ({
           };
 
           return (
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative', paddingLeft: 40 }}>
               {/* Rail overlay */}
               <Rail
                 providerIds={railIds}
                 position={position}
+                collapsedWidth={40}
+                expandedWidth={40}
                 getStateFor={(pid) => {
-                  const s = (effectiveProviderStates as any)[pid];
-                  return {
-                    streaming: s?.status === 'streaming',
-                    unread: s?.status === 'completed',
-                    error: s?.status === 'error'
-                  };
-                }}
-                onCardClick={(pid) => swapInFromRail(pid)}
-              />
-
-              {/* Main lanes */}
-              <LaneFactory
-                providerIds={mainIds}
-                renderLane={renderProviderCard}
-              />
+            const s = (effectiveProviderStates as any)[pid];
+            return {
+            streaming: s?.status === 'streaming',
+            unread: s?.status === 'completed',
+            error: s?.status === 'error'
+            };
+            }}
+            onCardClick={(pid) => swapInFromRail(pid)}
+            />
+            
+            {/* Main lanes */}
+            <LaneFactory
+            providerIds={mainIds}
+            renderLane={renderProviderCard}
+            />
             </div>
-          );
+            );
         })()}
       </div>
     </div>

@@ -1,110 +1,93 @@
-/**
- * StreamingBuffer: Batches streaming text updates using requestAnimationFrame
- * to eliminate jank and ensure smooth 60fps rendering during AI text streaming.
- * 
- * Instead of updating UI state on every delta, we collect all deltas in a buffer
- * and apply them once per frame, right before the browser paints.
- */
-
 type ResponseType = 'batch' | 'synthesis' | 'mapping';
-type UpdateCallback = (providerId: string, text: string, status: string, responseType: ResponseType) => void;
 
-interface BufferedUpdate {
+interface BatchUpdate {
   providerId: string;
-  delta: string;
+  text: string;
   status: string;
   responseType: ResponseType;
+  createdAt: number;
 }
 
 export class StreamingBuffer {
-  private buffer: Map<string, BufferedUpdate> = new Map();
-  private rafId: number | null = null;
-  private updateCallback: UpdateCallback;
+  private pendingDeltas: Map<string, {
+    deltas: { text: string; ts: number }[];
+    status: string;
+    responseType: ResponseType;
+  }> = new Map();
+  
+  private flushTimer: number | null = null;
 
-  constructor(updateCallback: UpdateCallback) {
-    this.updateCallback = updateCallback;
+  // onFlush receives the whole batch of updates at once
+  private onFlushCallback: (updates: BatchUpdate[]) => void;
+
+  constructor(onFlush: (updates: BatchUpdate[]) => void) {
+    this.onFlushCallback = onFlush;
   }
 
-  /**
-   * Add a text delta to the buffer for a specific provider.
-   * Multiple deltas for the same provider are concatenated.
-   */
-  addDelta(providerId: string, delta: string, status: string = 'streaming', responseType: ResponseType): void {
-    const existing = this.buffer.get(providerId);
+  addDelta(providerId: string, delta: string, status: string, responseType: ResponseType) {
+    if (!this.pendingDeltas.has(providerId)) {
+      this.pendingDeltas.set(providerId, {
+        deltas: [],
+        status,
+        responseType
+      });
+    }
     
-    if (existing) {
-      // Concatenate new delta with existing buffered text
-      existing.delta += delta;
-      existing.status = status;
-      existing.responseType = responseType;
-    } else {
-      this.buffer.set(providerId, { providerId, delta, status, responseType });
-    }
-
-    // Schedule a flush if not already scheduled
-    if (this.rafId === null) {
-      this.scheduleFlush();
-    }
-  }
-
-  /**
-   * Set complete text for a provider (non-incremental update)
-   */
-  setComplete(providerId: string, text: string, status: string = 'completed', responseType: ResponseType): void {
-    this.buffer.set(providerId, { providerId, delta: text, status, responseType });
+    const entry = this.pendingDeltas.get(providerId)!;
+    entry.deltas.push({ text: delta, ts: Date.now() });
+    entry.status = status;
+    entry.responseType = responseType;
     
-    if (this.rafId === null) {
-      this.scheduleFlush();
-    }
+    this.scheduleBatchFlush();
   }
 
-  /**
-   * Schedule a flush on the next animation frame
-   */
-  private scheduleFlush(): void {
-    this.rafId = requestAnimationFrame(() => {
-      this.flush();
+  private scheduleBatchFlush() {
+    if (this.flushTimer !== null) return;
+    
+    // Use RAF to batch at 60fps
+    this.flushTimer = window.requestAnimationFrame(() => {
+      this.flushAll();
+      this.flushTimer = null;
     });
   }
 
-  /**
-   * Apply all buffered updates in a single batch
-   */
-  private flush(): void {
-    if (this.buffer.size === 0) {
-      this.rafId = null;
-      return;
-    }
-
-    // Apply all updates in one go
-    this.buffer.forEach((update) => {
-      this.updateCallback(update.providerId, update.delta, update.status, update.responseType);
+  private flushAll() {
+    const updates: BatchUpdate[] = [];
+    
+    this.pendingDeltas.forEach((entry, providerId) => {
+      const concatenatedText = entry.deltas.map(d => d.text).join('');
+      const lastTs = entry.deltas.length ? entry.deltas[entry.deltas.length - 1].ts : Date.now();
+      updates.push({
+        providerId,
+        text: concatenatedText,
+        status: entry.status,
+        responseType: entry.responseType,
+        createdAt: lastTs,
+      });
     });
-
-    // Clear buffer and reset RAF ID
-    this.buffer.clear();
-    this.rafId = null;
+    
+    this.pendingDeltas.clear();
+    
+    if (updates.length > 0) {
+      // Sort by timestamp to preserve global arrival order across providers
+      updates.sort((a, b) => a.createdAt - b.createdAt);
+      this.onFlushCallback(updates);
+    }
   }
 
-  /**
-   * Force an immediate flush (useful for completion/error states)
-   */
-  flushImmediate(): void {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+  flushImmediate() {
+    if (this.flushTimer !== null) {
+      cancelAnimationFrame(this.flushTimer);
+      this.flushTimer = null;
     }
-    this.flush();
+    this.flushAll();
   }
 
-  /**
-   * Clean up (cancel any pending RAF)
-   */
-  destroy(): void {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+  clear() {
+    if (this.flushTimer !== null) {
+      cancelAnimationFrame(this.flushTimer);
+      this.flushTimer = null;
     }
-    this.buffer.clear();
+    this.pendingDeltas.clear();
   }
 }

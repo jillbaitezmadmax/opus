@@ -5,8 +5,10 @@ export class PortHealthManager {
   private messageHandler: ((msg: any) => void) | null = null;
   private onDisconnectCallback: (() => void) | undefined = undefined
 
-  private readonly HEALTH_CHECK_INTERVAL = 15000; // 15s - half of SW idle timeout
-  private readonly RECONNECT_DELAY = 1000;
+  // Relaxed health check and reconnect strategy to reduce churn
+  private readonly HEALTH_CHECK_INTERVAL = 30000; // 30s
+  private readonly RECONNECT_DELAY = 2000; // base delay
+  private readonly RECONNECT_JITTER_MS = 500; // random jitter
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
   
   private reconnectAttempts = 0;
@@ -57,7 +59,8 @@ export class PortHealthManager {
       this.sendKeepalivePing();
       
       const timeSinceLastPong = Date.now() - this.lastPongTimestamp;
-      if (timeSinceLastPong > this.HEALTH_CHECK_INTERVAL * 2) {
+      // Be more tolerant before declaring unhealthy
+      if (timeSinceLastPong > this.HEALTH_CHECK_INTERVAL * 3) {
         console.warn('[PortHealthManager] No pong received, port may be unhealthy');
         this.handleUnhealthyPort();
       }
@@ -125,7 +128,9 @@ export class PortHealthManager {
     }
     
     this.reconnectAttempts++;
-    const delay = this.RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts - 1);
+    const jitter = Math.floor(Math.random() * this.RECONNECT_JITTER_MS);
+    const base = this.RECONNECT_DELAY + jitter;
+    const delay = base * Math.pow(2, this.reconnectAttempts - 1);
     
     console.log(`[PortHealthManager] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     

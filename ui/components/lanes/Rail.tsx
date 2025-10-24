@@ -40,22 +40,15 @@ export const Rail: React.FC<RailProps> = ({
         top: 0,
         bottom: 0,
         [sideStyleKey]: 0,
-        width: collapsedWidth,
+        width: expandedWidth, // Fixed width to avoid layout jitter
         background: tokens.rail.bg,
         borderRight: isLeft ? `1px solid ${tokens.rail.border}` : undefined,
         borderLeft: !isLeft ? `1px solid ${tokens.rail.border}` : undefined,
-        transition: 'width 150ms ease',
         zIndex: 20,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
       } as React.CSSProperties}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.width = `${expandedWidth}px`;
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.width = `${collapsedWidth}px`;
-      }}
     >
       <div
         style={{
@@ -90,10 +83,13 @@ export const Rail: React.FC<RailProps> = ({
                 alignItems: 'center',
                 justifyContent: 'center',
                 transition: 'background 150ms ease, transform 150ms ease',
+                contentVisibility: 'auto' as any,
+                contain: 'layout paint' as any,
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background = tokens.rail.cardBgHover;
-                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
+                // Reduce hover transform to avoid extra repaints during streaming
+                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-0.5px)';
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background = tokens.rail.cardBg;
@@ -124,8 +120,9 @@ export const Rail: React.FC<RailProps> = ({
                       : state.unread
                         ? tokens.status.unread
                         : 'transparent',
-                  boxShadow: state.streaming ? '0 0 0 2px rgba(16,185,129,0.2)' : undefined,
-                  animation: state.streaming ? 'pulse 1.2s ease-in-out infinite' : undefined,
+                  // Quiet offscreen streaming: remove pulse animation to reduce work
+                  boxShadow: undefined,
+                  animation: undefined,
                 }}
               />
             </button>

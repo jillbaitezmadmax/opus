@@ -109,7 +109,7 @@ export class ConnectionHandler {
       this.lifecycleManager?.activateWorkflowMode();
 
       // Auto-relocate sessionId if needed (after reconnects or UI drift)
-      this._relocateSessionId(executeRequest);
+      await this._relocateSessionId(executeRequest);
 
       // Compile high-level request to detailed workflow
       const workflowRequest = this.services.compiler.compile(executeRequest);
@@ -128,7 +128,7 @@ export class ConnectionHandler {
    * is clearly NOT a new conversation (historical mapping/synthesis or continuation),
    * find the correct session to attach to.
    */
-  _relocateSessionId(executeRequest) {
+  async _relocateSessionId(executeRequest) {
     try {
       const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
       const isContinuation = executeRequest?.mode === 'continuation';
@@ -150,6 +150,20 @@ export class ConnectionHandler {
             return;
           }
         }
+        // Persistence fallback: lookup turnId to find sessionId
+        try {
+          const sm = this.services.sessionManager;
+          if (sm?.usePersistenceAdapter && sm?.isInitialized && sm.adapter?.isReady()) {
+            const turnRecord = await sm.adapter.get('turns', targetTurnId);
+            const foundSid = turnRecord?.sessionId;
+            if (foundSid) {
+              executeRequest.sessionId = foundSid;
+              try { await sm.getOrCreateSession(foundSid); } catch (_) {}
+              console.warn(`[ConnectionHandler] Relocated historical request via persistence to session ${foundSid}`);
+              return;
+            }
+          }
+        } catch (_) { /* non-fatal */ }
         // If not found, let engine fallback search handle it
       }
 

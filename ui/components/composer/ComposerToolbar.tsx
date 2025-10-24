@@ -23,6 +23,10 @@ const ComposerToolbar = ({
     <div
       className="composer-toolbar"
       style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 60,
+        boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -30,6 +34,8 @@ const ComposerToolbar = ({
         background: '#1e293b',
         borderBottom: '1px solid #334155',
         gap: '16px',
+        flexWrap: 'wrap',  // ADD THIS
+  minHeight: '60px',  // ADD THIS
       }}
     >
       {/* Left section - Exit and title */}

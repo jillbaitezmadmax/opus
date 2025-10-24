@@ -305,9 +305,11 @@ const CompactModelTray = ({
                         // Toggle off Map when clicking the already selected provider
                         onSetMappingProvider?.(null);
                         onToggleMapping?.(false);
+                        try { localStorage.removeItem('htos_mapping_provider'); localStorage.setItem('htos_mapping_enabled', JSON.stringify(false)); } catch (_) {}
                       } else {
                         onSetMappingProvider?.(provider.id);
                         onToggleMapping?.(true);
+                        try { localStorage.setItem('htos_mapping_provider', provider.id); localStorage.setItem('htos_mapping_enabled', JSON.stringify(true)); } catch (_) {}
                       }
                       setShowMapDropdown(false);
                     }}
@@ -662,32 +664,58 @@ const CompactModelTray = ({
                     <input
                       type="checkbox"
                       checked={isMapEnabled}
-                      onChange={(e) => !isLoading && onToggleMapping?.(e.target.checked)}
-                      disabled={!canRefine || isLoading}
-                      style={{
-                        width: '14px',
-                        height: '14px',
-                        accentColor: '#6366f1',
+                      onChange={(e) => {
+                        if (isLoading) return;
+                        const checked = e.target.checked;
+                        // Toggle mapping state and persist immediately
+                        onToggleMapping?.(checked);
+                        try { localStorage.setItem('htos_mapping_enabled', JSON.stringify(checked)); } catch (_) {}
+                        if (!checked) {
+                          // Clear selected mapping provider when disabling mapping
+                          onSetMappingProvider?.(null);
+                          try { localStorage.removeItem('htos_mapping_provider'); } catch (_) {}
+                        }
                       }}
-                    />
+                       disabled={!canRefine || isLoading}
+                       style={{
+                         width: '14px',
+                         height: '14px',
+                         accentColor: '#6366f1',
+                       }}
+                     />
                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>
                       Map
                     </span>
                   </div>
                   <select
                     value={mapProviderId}
-                    onChange={(e) => onSetMappingProvider?.(e.target.value || null)}
-                    disabled={!isMapEnabled || !canRefine || isLoading}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.1)',
-                      border: '1px solid rgba(255, 255, 255, 0.2)',
-                      borderRadius: '4px',
-                      color: '#e2e8f0',
-                      fontSize: '12px',
-                      padding: '2px 6px',
-                      opacity: isMapEnabled && canRefine ? 1 : 0.5,
+                    onChange={(e) => {
+                      const val = e.target.value || null;
+                      onSetMappingProvider?.(val);
+                      try {
+                        if (val) {
+                          // Ensure mapping is enabled when a provider is selected
+                          onToggleMapping?.(true);
+                          localStorage.setItem('htos_mapping_provider', val);
+                          localStorage.setItem('htos_mapping_enabled', JSON.stringify(true));
+                        } else {
+                          onToggleMapping?.(false);
+                          localStorage.removeItem('htos_mapping_provider');
+                          localStorage.setItem('htos_mapping_enabled', JSON.stringify(false));
+                        }
+                      } catch (_) {}
                     }}
-                  >
+                     disabled={!isMapEnabled || !canRefine || isLoading}
+                     style={{
+                       background: 'rgba(255, 255, 255, 0.1)',
+                       border: '1px solid rgba(255, 255, 255, 0.2)',
+                       borderRadius: '4px',
+                       color: '#e2e8f0',
+                       fontSize: '12px',
+                       padding: '2px 6px',
+                       opacity: isMapEnabled && canRefine ? 1 : 0.5,
+                     }}
+                   >
                     <option value="">Select...</option>
                     {selectedProviders
                       .filter(p => unifyProviderId !== p.id) // Exclude current unify
