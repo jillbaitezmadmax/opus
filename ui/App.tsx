@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import React from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
@@ -84,6 +84,13 @@ import { ComposerMode } from './components/composer/ComposerMode';
 import { ProviderKey, ExecuteWorkflowRequest } from '../shared/contract';
 
 // buildmappingPrompt has been moved to the backend (workflow-engine.js)
+
+const EMPTY_ELIGIBILITY = {
+  synthMap: {} as Record<string, { disabled: boolean; reason?: string }> ,
+  mappingMap: {} as Record<string, { disabled: boolean; reason?: string }> ,
+  disableSynthesisRun: true,
+  disableMappingRun: true,
+} as const;
 
 const App = () => {
   // Single source of truth: all messages in one array
@@ -239,7 +246,104 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
   }, [mappingEnabled, synthesisProvider, mappingProvider, selectedModels]);
 
   // Removed ambiguous helper getAllProviderResponses to prevent synthesis/mapping from shadowing batch.
+  const findRoundForUserTurn = useCallback((userTurnId: string) => {
+    const userIndex = messages.findIndex(m => m.id === userTurnId);
+    if (userIndex === -1) return null;
+    // Find first non-synthesis/non-mapping AI turn after this user (provider outputs of this round)
+    let aiIndex = -1;
+    for (let i = userIndex + 1; i < messages.length; i++) {
+      const t = messages[i];
+      if (t.type === 'user') break; // next round begins
+      if (t.type === 'ai') {
+        const ai = t as AiTurn;
+        if (!ai.isSynthesisAnswer && !ai.isMappingAnswer) {
+          aiIndex = i;
+          break;
+        }
+      }
+    }
+    const ai = aiIndex !== -1 ? (messages[aiIndex] as AiTurn) : undefined;
+    return { userIndex, user: messages[userIndex] as UserTurn, aiIndex, ai };
+  }, [messages]);
 
+  const buildEligibleMapForRound = useCallback((userTurnId: string): {
+    synthMap: Record<string, { disabled: boolean; reason?: string }>;
+    mappingMap: Record<string, { disabled: boolean; reason?: string }>;
+    disableSynthesisRun: boolean;
+    disableMappingRun: boolean;
+  } => {
+    const round = findRoundForUserTurn(userTurnId);
+    if (!round) return { synthMap: {}, mappingMap: {}, disableSynthesisRun: true, disableMappingRun: true };
+
+    const { aiIndex, ai } = round;
+    const outputs = Object.values(ai?.providerResponses || {}).filter(r => r.status === 'completed' && r.text?.trim());
+    const enoughOutputs = outputs.length >= 2;
+
+    // Check existing synthesis and mapping responses in the unified AiTurn
+    const alreadySynthPids = ai?.synthesisResponses ? Object.keys(ai.synthesisResponses) : [];
+    const alreadyMappingPids = ai?.mappingResponses ? Object.keys(ai.mappingResponses) : [];
+
+    // Determine if there is at least one completed mapping result in this round
+    const hasCompletedMapping = (() => {
+      if (!ai?.mappingResponses) return false;
+      for (const [pid, resp] of Object.entries(ai.mappingResponses as Record<string, any>)) {
+        const arr: ProviderResponse[] = Array.isArray(resp) ? (resp as ProviderResponse[]) : [resp as ProviderResponse];
+        const last = arr[arr.length - 1];
+        if (last && last.status === 'completed' && (last.text?.trim())) return true;
+      }
+      return false;
+    })();
+
+    // Build eligibility map for Synthesis (multi-select)
+    const synthMap: Record<string, { disabled: boolean; reason?: string }> = {};
+    LLM_PROVIDERS_CONFIG.forEach(p => {
+      const alreadySynth = alreadySynthPids.includes(p.id);
+      if (!enoughOutputs) {
+        synthMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
+      } else if (alreadySynth) {
+        synthMap[p.id] = { disabled: true, reason: 'Already synthesized for this round' };
+      } else {
+        synthMap[p.id] = { disabled: false };
+      }
+    });
+
+    // Build eligibility map for Mapping (single-select)
+    const mappingMap: Record<string, { disabled: boolean; reason?: string }> = {};
+    LLM_PROVIDERS_CONFIG.forEach(p => {
+      const alreadyMappingd = alreadyMappingPids.includes(p.id);
+      if (!enoughOutputs) {
+        mappingMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
+      } else if (alreadyMappingd) {
+        mappingMap[p.id] = { disabled: true, reason: 'Already mappingd for this round' };
+      } else {
+        mappingMap[p.id] = { disabled: false };
+      }
+    });
+
+    return {
+      synthMap,
+      mappingMap,
+      disableSynthesisRun: !enoughOutputs,
+      disableMappingRun: !enoughOutputs,
+    };
+  }, [findRoundForUserTurn]);
+
+  const eligibilityMaps = useMemo(() => {
+    const maps: Record<string, {
+      synthMap: Record<string, { disabled: boolean; reason?: string }>;
+      mappingMap: Record<string, { disabled: boolean; reason?: string }>;
+      disableSynthesisRun: boolean;
+      disableMappingRun: boolean;
+    }> = {};
+    
+    messages.forEach(turn => {
+      if (isUserTurn(turn)) {
+        maps[turn.id] = buildEligibleMapForRound(turn.id);
+      }
+    });
+    
+    return maps;
+  }, [messages, buildEligibleMapForRound]);
   // ============================================================================
  // Abstract: Connection reducer for state hygiene—handles enums internally, exports boolean for API.
 const connectionReducer = (state: { isConnected: boolean; isReconnecting: boolean }, action: { type: 'UPDATE' | 'RECONNECT'; payload?: boolean }) => {
@@ -570,26 +674,6 @@ useEffect(() => {
   }, [currentSessionId]);
 
   // ===== Round helpers: locate round, existing synth/mapping blocks, and insertion point =====
-  const findRoundForUserTurn = useCallback((userTurnId: string) => {
-    const userIndex = messages.findIndex(m => m.id === userTurnId);
-    if (userIndex === -1) return null;
-    // Find first non-synthesis/non-mapping AI turn after this user (provider outputs of this round)
-    let aiIndex = -1;
-    for (let i = userIndex + 1; i < messages.length; i++) {
-      const t = messages[i];
-      if (t.type === 'user') break; // next round begins
-      if (t.type === 'ai') {
-        const ai = t as AiTurn;
-        if (!ai.isSynthesisAnswer && !ai.isMappingAnswer) {
-          aiIndex = i;
-          break;
-        }
-      }
-    }
-    const ai = aiIndex !== -1 ? (messages[aiIndex] as AiTurn) : undefined;
-    return { userIndex, user: messages[userIndex] as UserTurn, aiIndex, ai };
-  }, [messages]);
-
   // Helper to find the first insertion index before an AI turn
   const findFirstInsertIndexBeforeAi = useCallback((userTurnId: string) => {
     const round = findRoundForUserTurn(userTurnId);
@@ -627,68 +711,7 @@ useEffect(() => {
     return false;
   }, [messages]);
 
-  const buildEligibleMapForRound = useCallback((userTurnId: string): {
-    synthMap: Record<string, { disabled: boolean; reason?: string }>;
-    mappingMap: Record<string, { disabled: boolean; reason?: string }>;
-    disableSynthesisRun: boolean;
-    disableMappingRun: boolean;
-  } => {
-    const round = findRoundForUserTurn(userTurnId);
-    if (!round) return { synthMap: {}, mappingMap: {}, disableSynthesisRun: true, disableMappingRun: true };
-
-    const { aiIndex, ai } = round;
-    const outputs = Object.values(ai?.providerResponses || {}).filter(r => r.status === 'completed' && r.text?.trim());
-    const enoughOutputs = outputs.length >= 2;
-
-    // Check existing synthesis and mapping responses in the unified AiTurn
-    const alreadySynthPids = ai?.synthesisResponses ? Object.keys(ai.synthesisResponses) : [];
-    const alreadyMappingPids = ai?.mappingResponses ? Object.keys(ai.mappingResponses) : [];
-
-    // Determine if there is at least one completed mapping result in this round
-    const hasCompletedMapping = (() => {
-      if (!ai?.mappingResponses) return false;
-      for (const [pid, resp] of Object.entries(ai.mappingResponses as Record<string, any>)) {
-        const arr: ProviderResponse[] = Array.isArray(resp) ? (resp as ProviderResponse[]) : [resp as ProviderResponse];
-        const last = arr[arr.length - 1];
-        if (last && last.status === 'completed' && (last.text?.trim())) return true;
-      }
-      return false;
-    })();
-
-    // Build eligibility map for Synthesis (multi-select)
-    const synthMap: Record<string, { disabled: boolean; reason?: string }> = {};
-    LLM_PROVIDERS_CONFIG.forEach(p => {
-      const alreadySynth = alreadySynthPids.includes(p.id);
-      if (!enoughOutputs) {
-        synthMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
-      } else if (alreadySynth) {
-        synthMap[p.id] = { disabled: true, reason: 'Already synthesized for this round' };
-      } else {
-        synthMap[p.id] = { disabled: false };
-      }
-    });
-
-    // Build eligibility map for Mapping (single-select)
-    const mappingMap: Record<string, { disabled: boolean; reason?: string }> = {};
-    LLM_PROVIDERS_CONFIG.forEach(p => {
-      const alreadyMappingd = alreadyMappingPids.includes(p.id);
-      if (!enoughOutputs) {
-        mappingMap[p.id] = { disabled: true, reason: 'Need ≥ 2 model outputs in this round' };
-      } else if (alreadyMappingd) {
-        mappingMap[p.id] = { disabled: true, reason: 'Already mappingd for this round' };
-      } else {
-        mappingMap[p.id] = { disabled: false };
-      }
-    });
-
-    return {
-      synthMap,
-      mappingMap,
-      disableSynthesisRun: !enoughOutputs,
-      disableMappingRun: !enoughOutputs,
-    };
-  }, [findRoundForUserTurn]);
-
+  
   // ===== Mapping and synthesis provider handlers =====
   const handleToggleMapping = useCallback((enabled: boolean) => {
     setMappingEnabled(enabled);
@@ -784,6 +807,13 @@ useEffect(() => {
     // If there is no mapping present, UI should have prevented this call (see handleClipClick gating).
     const isHistoricalRerun = !!providerIdOverride;
 
+    const clipPreferredMapping = activeClips[ai.id]?.mapping || null;
+    const perRoundMapping = mappingSelectionByRound[userTurnId] || null;
+    const preferredMappingCandidate = clipPreferredMapping || perRoundMapping;
+    const preferredMappingProvider = preferredMappingCandidate && LLM_PROVIDERS_CONFIG.some(p => p.id === preferredMappingCandidate)
+      ? preferredMappingCandidate as ProviderKey
+      : null;
+
     updateAiTurnById(ai.id, (prevAiTurn) => {
       const prev = prevAiTurn.synthesisResponses || {};
       const next: Record<string, ProviderResponse[]> = { ...prev };
@@ -810,9 +840,16 @@ useEffect(() => {
           return null;
         }
       })();
-      const perRoundMapping = mappingSelectionByRound[userTurnId] || null;
       const effectiveMappingProvider =
         perRoundMapping || mappingProvider || fallbackMapping || null;
+
+      const historicalContext: ExecuteWorkflowRequest['historicalContext'] = {
+        userTurnId,
+        sourceType: 'batch'
+      };
+      if (isHistoricalRerun && preferredMappingProvider) {
+        historicalContext.preferredMappingProvider = preferredMappingProvider;
+      }
 
       const request: ExecuteWorkflowRequest = {
         sessionId: currentSessionId,
@@ -833,10 +870,7 @@ useEffect(() => {
               }
             : undefined,
         useThinking: !!thinkSynthByRound[userTurnId],
-        historicalContext: {
-          userTurnId: userTurnId,
-          sourceType: 'batch'
-        }
+        historicalContext
       };
 
       if (selected.length === 1) {
@@ -852,7 +886,7 @@ useEffect(() => {
     } finally {
       isSynthRunningRef.current = false;
     }
-  }, [currentSessionId, synthSelectionsByRound, uiTabId, findRoundForUserTurn, thinkSynthByRound, updateAiTurnById, mappingSelectionByRound, mappingProvider, mappingEnabled]);
+  }, [currentSessionId, synthSelectionsByRound, uiTabId, findRoundForUserTurn, thinkSynthByRound, updateAiTurnById, mappingSelectionByRound, mappingProvider, mappingEnabled, activeClips]);
 
   // Build the mapping prompt using provided fixed template from spec
   
@@ -861,7 +895,7 @@ useEffect(() => {
     if (!currentSessionId) return;
 
     const roundInfo = findRoundForUserTurn(userTurnId);
-    if (!roundInfo || !roundInfo.user || !roundInfo.ai) return;
+    if (!roundInfo?.user || !roundInfo.ai) return;
 
     const { user: roundUser, ai: roundAi } = roundInfo;
     const modelOutputs: Record<string, string> = {};
@@ -871,8 +905,13 @@ useEffect(() => {
     });
     if (Object.keys(modelOutputs).length < 2) return;
 
-    const mappingProvider = providerIdOverride || mappingSelectionByRound[userTurnId];
-    if (!mappingProvider) return;
+    const effectiveMappingProvider = providerIdOverride || mappingSelectionByRound[userTurnId];
+    if (!effectiveMappingProvider) return;
+
+    setMappingSelectionByRound(prev => {
+      if (prev[userTurnId] === effectiveMappingProvider) return prev;
+      return { ...prev, [userTurnId]: effectiveMappingProvider };
+    });
 
     setIsLoading(true);
     setUiPhase('streaming');
@@ -881,17 +920,22 @@ useEffect(() => {
     updateAiTurnById(roundAi.id, (prevAiTurn: AiTurn) => {
       const prev = prevAiTurn.mappingResponses || {};
       const next: Record<string, ProviderResponse[]> = { ...prev };
-      const pid = mappingProvider;
-      const arr = Array.isArray(next[pid]) ? next[pid]! : [];
-      arr.push({ providerId: pid, text: '', status: 'pending', createdAt: Date.now() });
-      next[pid] = arr;
+      const arr = Array.isArray(next[effectiveMappingProvider])
+        ? [...(next[effectiveMappingProvider] as ProviderResponse[])]
+        : [];
+      arr.push({
+        providerId: effectiveMappingProvider as ProviderKey,
+        text: '',
+        status: 'pending',
+        createdAt: Date.now(),
+      });
+      next[effectiveMappingProvider] = arr;
       return { ...prevAiTurn, mappingResponses: next };
     });
-    
+
     activeAiTurnIdRef.current = roundAi.id;
 
     try {
-      // Unified request for rerun mapping
       const request: ExecuteWorkflowRequest = {
         sessionId: currentSessionId,
         threadId: 'default-thread',
@@ -900,13 +944,13 @@ useEffect(() => {
         providers: [],
         mapping: {
           enabled: true,
-          providers: [mappingProvider as ProviderKey]
+          providers: [effectiveMappingProvider as ProviderKey],
         },
-        useThinking: (mappingProvider === 'chatgpt') ? !!thinkMappingByRound[userTurnId] : false,
+        useThinking: effectiveMappingProvider === 'chatgpt' ? !!thinkMappingByRound[userTurnId] : false,
         historicalContext: {
-          userTurnId: userTurnId,
-          sourceType: 'batch'
-        }
+          userTurnId,
+          sourceType: 'batch',
+        },
       };
 
       await api.executeWorkflow(request);
@@ -916,47 +960,51 @@ useEffect(() => {
       setUiPhase('awaiting_action');
       activeAiTurnIdRef.current = null;
     }
-  }, [currentSessionId, mappingSelectionByRound, uiTabId, findRoundForUserTurn, thinkMappingByRound, updateAiTurnById]);
+  }, [api, currentSessionId, findRoundForUserTurn, mappingSelectionByRound, thinkMappingByRound, updateAiTurnById]);
 
-  // Historical Clips: handle clip click for synthesis/mapping
   const handleClipClick = useCallback((aiTurnId: string, type: 'synthesis' | 'mapping', providerId: string) => {
-    const aiTurn = messages.find((m: TurnMessage) => m.id === aiTurnId && m.type === 'ai') as AiTurn | undefined;
+    const aiTurn = messages.find(m => m.id === aiTurnId && m.type === 'ai') as AiTurn | undefined;
     if (!aiTurn) return;
 
     const responsesMap = type === 'synthesis' ? (aiTurn.synthesisResponses || {}) : (aiTurn.mappingResponses || {});
-    const hasExisting = Array.isArray((responsesMap as any)[providerId]) ? ((responsesMap as any)[providerId] as ProviderResponse[]).length > 0 : !!(responsesMap as any)[providerId];
+    const hasExisting = Array.isArray(responsesMap[providerId])
+      ? (responsesMap[providerId] as ProviderResponse[]).length > 0
+      : !!responsesMap[providerId];
 
-    // Update active view immediately
-    setActiveClips((prev: Record<string, { synthesis?: string; mapping?: string }>) => ({
+    setActiveClips(prev => ({
       ...prev,
       [aiTurnId]: {
         ...(prev[aiTurnId] || {}),
         [type]: providerId,
-      }
+      },
     }));
 
+    const userTurnId = aiTurn.userTurnId;
+    if (type === 'mapping' && userTurnId) {
+      setMappingSelectionByRound(prev => {
+        if (prev[userTurnId] === providerId) return prev;
+        return { ...prev, [userTurnId]: providerId };
+      });
+    }
+
     if (hasExisting) {
-      // Just a view switch
       return;
     }
 
-    // If clicking a synthesis clip for a historical turn, ensure there is a completed mapping for the round
     if (type === 'synthesis') {
       const mappingResponses = aiTurn.mappingResponses || {};
-      const hasCompletedMapping = Object.values(mappingResponses).some((arrOrObj: any) => {
-        const arr = Array.isArray(arrOrObj) ? arrOrObj as ProviderResponse[] : [arrOrObj as ProviderResponse];
+      const hasCompletedMapping = Object.values(mappingResponses).some((value) => {
+        const arr = Array.isArray(value) ? value : [value];
         const last = arr[arr.length - 1];
         return !!(last && last.status === 'completed' && last.text?.trim());
       });
+
       if (!hasCompletedMapping) {
         setAlertText('No mapping result exists for this round. Run mapping first before synthesizing.');
-        // We already set the active clip selection visually; keep that but do not trigger a historical synth.
         return;
       }
     }
 
-    // Trigger historical rerun for the clicked provider
-    const userTurnId = aiTurn.userTurnId;
     if (!userTurnId) return;
 
     if (type === 'synthesis') {
@@ -1718,9 +1766,13 @@ await api.ensurePort({ sessionId });
     const turn = messages[index];
 
     if (turn && isUserTurn(turn)) {
-      const { synthMap, mappingMap, disableSynthesisRun, disableMappingRun } = buildEligibleMapForRound(turn.id);
+      const eligibility = eligibilityMaps[turn.id] ?? EMPTY_ELIGIBILITY;
       return (
-        <div style={{ padding: '8px 0', overflowAnchor: 'none' }}>
+        <div
+          style={{ padding: '8px 0', overflowAnchor: 'none' }}
+          data-disable-synthesis={eligibility.disableSynthesisRun}
+          data-disable-mapping={eligibility.disableMappingRun}
+        >
           <UserTurnBlock
             userTurn={turn as UserTurn}
             isExpanded={expandedUserTurns[turn.id] ?? true}

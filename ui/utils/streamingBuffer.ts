@@ -1,3 +1,4 @@
+// src/ui/utils/streamingBuffer.ts
 type ResponseType = 'batch' | 'synthesis' | 'mapping';
 
 interface BatchUpdate {
@@ -16,8 +17,6 @@ export class StreamingBuffer {
   }> = new Map();
   
   private flushTimer: number | null = null;
-
-  // onFlush receives the whole batch of updates at once
   private onFlushCallback: (updates: BatchUpdate[]) => void;
 
   constructor(onFlush: (updates: BatchUpdate[]) => void) {
@@ -42,12 +41,17 @@ export class StreamingBuffer {
   }
 
   private scheduleBatchFlush() {
-    if (this.flushTimer !== null) return;
+    // Cancel any pending flush
+    if (this.flushTimer !== null) {
+      cancelAnimationFrame(this.flushTimer);
+    }
     
-    // Use RAF to batch at 60fps
+    // ⭐ DOUBLE-RAF PATTERN: First RAF schedules, second RAF executes after layout
     this.flushTimer = window.requestAnimationFrame(() => {
-      this.flushAll();
-      this.flushTimer = null;
+      window.requestAnimationFrame(() => {
+        this.flushAll();
+        this.flushTimer = null;
+      });
     });
   }
 
@@ -69,7 +73,6 @@ export class StreamingBuffer {
     this.pendingDeltas.clear();
     
     if (updates.length > 0) {
-      // Sort by timestamp to preserve global arrival order across providers
       updates.sort((a, b) => a.createdAt - b.createdAt);
       this.onFlushCallback(updates);
     }

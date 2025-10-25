@@ -111,6 +111,23 @@ export class ConnectionHandler {
       // Auto-relocate sessionId if needed (after reconnects or UI drift)
       await this._relocateSessionId(executeRequest);
 
+      // NEW: Ensure session memory is hydrated for continuation/historical requests
+      try {
+        const isContinuation = executeRequest?.mode === 'continuation';
+        const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
+        const sid = executeRequest?.sessionId;
+        if ((isContinuation || isHistorical) && sid) {
+          const sm = this.services.sessionManager;
+          if (sm && (!sm.sessions || !sm.sessions[sid])) {
+            await sm.getOrCreateSession(sid);
+            console.log(`[ConnectionHandler] Hydrated session memory for ${sid}`);
+          }
+        }
+      } catch (e) {
+        // Non-fatal hydration failure; engine/compile will proceed with fallbacks
+        console.warn('[ConnectionHandler] Session hydration skipped:', e?.message || String(e));
+      }
+
       // Compile high-level request to detailed workflow
       const workflowRequest = this.services.compiler.compile(executeRequest);
 

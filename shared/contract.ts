@@ -42,6 +42,7 @@ export interface ExecuteWorkflowRequest {
     branchPointTurnId?: string;
     inheritContextUpTo?: string;
     replaceTurnId?: string;
+    preferredMappingProvider?: ProviderKey;
   };
 }
 
@@ -84,6 +85,7 @@ export interface SynthesisStepPayload {
   useThinking?: boolean;
   continueConversationId?: string;
   attemptNumber?: number;
+  preferredMappingProvider?: ProviderKey;
 }
 
 // NOTE: Added Omit<...> to reduce duplication, but the effective type is the same.

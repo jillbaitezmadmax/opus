@@ -1,22 +1,28 @@
+import RefineButton from './RefineButton';
+
 interface ComposerToolbarProps {
-  granularity?: 'full' | 'paragraph' | 'sentence';
-  onGranularityChange?: (level: 'full' | 'paragraph' | 'sentence') => void;
   onExit?: () => void;
   onSave?: () => void;
   onExport?: () => void;
+  onRefine?: (selectedModel: string, content: string) => void;
+  onToggleDocuments?: () => void;
   isDirty?: boolean;
   isSaving?: boolean;
+  isRefining?: boolean;
+  showDocumentsPanel?: boolean;
   editorRef: React.RefObject<any>;
 }
 
 const ComposerToolbar = ({
-  granularity,
-  onGranularityChange,
   onExit,
   onSave,
   onExport,
+  onRefine,
+  onToggleDocuments,
   isDirty,
   isSaving = false,
+  isRefining = false,
+  showDocumentsPanel = false,
   editorRef,
 }: ComposerToolbarProps) => {
   return (
@@ -81,54 +87,71 @@ const ComposerToolbar = ({
         )}
       </div>
       
-      {/* Center section - Granularity controls */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          background: '#0f172a',
-          borderRadius: '8px',
-          padding: '4px',
-          border: '1px solid #334155',
-        }}
-      >
-        <span
-          style={{
+      {/* Center section - Title */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '12px',
+        flex: 1,
+        justifyContent: 'center'
+      }}>
+        <h2 style={{ 
+          margin: 0, 
+          fontSize: '16px', 
+          fontWeight: 600, 
+          color: '#e2e8f0' 
+        }}>
+          Composer Mode
+        </h2>
+        {isDirty && (
+          <span style={{
             fontSize: '12px',
-            color: '#94a3b8',
-            paddingLeft: '8px',
+            color: '#f59e0b',
             fontWeight: 500,
-          }}
-        >
-          Granularity:
-        </span>
-        
-        {(['full', 'paragraph', 'sentence'] as const).map((level) => (
-          <button
-            key={level}
-            onClick={() => onGranularityChange && onGranularityChange(level)}
-            style={{
-              background: granularity === level ? '#8b5cf6' : 'transparent',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              color: granularity === level ? '#fff' : '#94a3b8',
-              fontSize: '12px',
-              fontWeight: 500,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              textTransform: 'capitalize',
-            }}
-            aria-pressed={granularity === level}
-          >
-            {level}
-          </button>
-        ))}
+            background: 'rgba(245, 158, 11, 0.1)',
+            padding: '2px 8px',
+            borderRadius: '4px',
+            border: '1px solid rgba(245, 158, 11, 0.2)',
+          }}>
+            Unsaved changes
+          </span>
+        )}
       </div>
       
       {/* Right section - Action buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          onClick={onToggleDocuments}
+          style={{
+            background: showDocumentsPanel ? '#3b82f6' : '#334155',
+            border: '1px solid',
+            borderColor: showDocumentsPanel ? '#3b82f6' : '#475569',
+            borderRadius: '8px',
+            padding: '8px 16px',
+            color: showDocumentsPanel ? '#fff' : '#94a3b8',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+          aria-label="Toggle documents panel"
+        >
+          <span style={{ fontSize: '16px' }}>📄</span>
+          Documents
+        </button>
+        
+        <RefineButton
+          onRefine={(selectedModel, content) => {
+            // Get content from editor and pass to refine handler
+            const editorContent = editorRef.current?.getContent?.() || '';
+            onRefine?.(selectedModel, editorContent);
+          }}
+          isRefining={isRefining}
+          disabled={!editorRef.current}
+        />
+        
         <button
           onClick={onSave}
           disabled={!isDirty || isSaving}

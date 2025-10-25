@@ -299,11 +299,65 @@ export const HorizontalChatRail: React.FC<HorizontalChatRailProps> = ({
               {/* Right: Two rows – row1 Synthesis + Ensemble (mapping), row2 Batch responses */}
               <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 10, height: '100%' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 10, maxHeight: 76, overflow: 'hidden' }}>
+                  <div 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if (step.synthesis.length > 0 && step.chatTurnIndex !== null) {
+                        onResponsePick?.(step.chatTurnIndex!, step.synthesis[0].providerId, step.synthesis[0].content);
+                      }
+                    }}
+                    style={{ 
+                      background: '#0f172a', 
+                      border: '1px solid #334155', 
+                      borderRadius: 8, 
+                      padding: 10, 
+                      maxHeight: 76, 
+                      overflow: 'hidden',
+                      cursor: step.synthesis.length > 0 ? 'pointer' : 'default',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (step.synthesis.length > 0) {
+                        e.currentTarget.style.background = '#1e293b';
+                        e.currentTarget.style.borderColor = '#475569';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#0f172a';
+                      e.currentTarget.style.borderColor = '#334155';
+                    }}
+                  >
                     <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4 }}>Synthesis</div>
                     <div style={{ fontSize: 12, color: '#e2e8f0', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>{synthPreview ? synthPreview : '—'}</div>
                   </div>
-                  <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 10, maxHeight: 76, overflow: 'hidden' }}>
+                  <div 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if (step.mapping.length > 0 && step.chatTurnIndex !== null) {
+                        onResponsePick?.(step.chatTurnIndex!, step.mapping[0].providerId, step.mapping[0].content);
+                      }
+                    }}
+                    style={{ 
+                      background: '#0f172a', 
+                      border: '1px solid #334155', 
+                      borderRadius: 8, 
+                      padding: 10, 
+                      maxHeight: 76, 
+                      overflow: 'hidden',
+                      cursor: step.mapping.length > 0 ? 'pointer' : 'default',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (step.mapping.length > 0) {
+                        e.currentTarget.style.background = '#1e293b';
+                        e.currentTarget.style.borderColor = '#475569';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#0f172a';
+                      e.currentTarget.style.borderColor = '#334155';
+                    }}
+                  >
                     <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4 }}>Ensemble</div>
                     <div style={{ fontSize: 12, color: '#e2e8f0', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>{mapPreview ? mapPreview : '—'}</div>
                   </div>
