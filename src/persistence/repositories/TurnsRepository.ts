@@ -1,18 +1,18 @@
 // Turns Repository - Manages turn records
 
 import { BaseRepository } from '../BaseRepository';
-import { TurnRecord } from './types';
+import { TurnRecord } from '../types';
 
 export class TurnsRepository extends BaseRepository<TurnRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Turns');
+    super(db, 'turns');
   }
 
   /**
    * Get turns by thread ID
    */
   async getByThreadId(threadId: string): Promise<TurnRecord[]> {
-    const turns = await this.getByIndex('threadId', threadId);
+    const turns = await this.getByIndex('byThreadId', threadId);
     return turns.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
   }
 
@@ -20,29 +20,34 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
    * Get turns by session ID
    */
   async getBySessionId(sessionId: string): Promise<TurnRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    return this.getByIndex('bySessionId', sessionId);
   }
 
   /**
-   * Get turns by user ID
+   * Get turns by user ID (scan fallback; no index)
    */
   async getByUserId(userId: string): Promise<TurnRecord[]> {
-    return this.getByIndex('userId', userId);
+    const all = await this.getAll();
+    return all.filter(t => t.userId === userId);
   }
 
   /**
-   * Get turns by role (user/assistant)
+   * Get turns by role (user/assistant) using type index
    */
   async getByRole(role: 'user' | 'assistant'): Promise<TurnRecord[]> {
-    return this.getByIndex('role', role);
+    // Map role to stored type
+    const type = role === 'assistant' ? 'ai' : 'user';
+    return this.getByIndex('byType', type);
   }
 
   /**
-   * Get turns created within a date range
+   * Get turns created within a date range (scan fallback)
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<TurnRecord[]> {
-    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    const start = startDate.getTime();
+    const end = endDate.getTime();
+    const all = await this.getAll();
+    return all.filter(t => t.createdAt >= start && t.createdAt <= end);
   }
 
   /**
@@ -61,7 +66,7 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
     offset: number = 0,
     limit: number = 50
   ): Promise<{ turns: TurnRecord[]; hasMore: boolean }> {
-    const result = await this.getPaginated('threadId', threadId, offset, limit);
+    const result = await this.getPaginated('byThreadId', threadId, offset, limit);
     return {
       turns: result.records,
       hasMore: result.hasMore
@@ -119,8 +124,8 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
     
     const stats = {
       total: turns.length,
-      userTurns: turns.filter(t => t.role === 'user').length,
-      assistantTurns: turns.filter(t => t.role === 'assistant').length,
+      userTurns: turns.filter(t => (t.type === 'user')).length,
+      assistantTurns: turns.filter(t => (t.type === 'ai')).length,
       averageLength: 0,
       totalLength: 0
     };
@@ -157,9 +162,9 @@ export class TurnsRepository extends BaseRepository<TurnRecord> {
     });
 
     const threadEntries = Object.entries(threadCounts);
-const mostActiveThread = threadEntries.length > 0
-  ? threadEntries.reduce((a, b) => (a[1] > b[1] ? a : b))[0]
-  : null;
+    const mostActiveThread = threadEntries.length > 0
+      ? threadEntries.reduce((a, b) => (a[1] > b[1] ? a : b))[0]
+      : null;
 
     return {
       totalTurns: turns.length,
@@ -225,9 +230,10 @@ const mostActiveThread = threadEntries.length > 0
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i];
       
-      if (turn.role !== expectedRole) {
+      const currentRole: 'user' | 'assistant' = (turn.type === 'ai') ? 'assistant' : 'user';
+      if (currentRole !== expectedRole) {
         isValidFlow = false;
-        issues.push(`Turn ${i + 1}: Expected ${expectedRole}, got ${turn.role}`);
+        issues.push(`Turn ${i + 1}: Expected ${expectedRole}, got ${currentRole}`);
       }
       
       // Check sequence numbers

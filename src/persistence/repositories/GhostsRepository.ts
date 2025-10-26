@@ -1,55 +1,59 @@
 // Ghosts Repository - Manages ghost records for temporal state tracking
 
 import { BaseRepository } from '../BaseRepository';
-import { GhostRecord } from './types';
+import { GhostRecord } from '../types';
 
 export class GhostsRepository extends BaseRepository<GhostRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Ghosts');
+    super(db, 'ghosts');
   }
 
   /**
    * Get ghosts by document ID
    */
   async getByDocumentId(documentId: string): Promise<GhostRecord[]> {
-    return this.getByIndex('documentId', documentId);
+    return this.getByIndex('byDocumentId', documentId);
   }
 
   /**
-   * Get ghosts by entity ID
+   * Get ghosts by entity ID (scan fallback; no index)
    */
   async getByEntityId(entityId: string): Promise<GhostRecord[]> {
-    const ghosts = await this.getByIndex('entityId', entityId);
-    return ghosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const ghosts = await this.getAll();
+    return ghosts
+      .filter(g => g.entityId === entityId)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }
 
   /**
-   * Get ghosts by entity type
+   * Get ghosts by entity type (scan fallback)
    */
   async getByEntityType(entityType: string): Promise<GhostRecord[]> {
-    return this.getByIndex('entityType', entityType);
+    const ghosts = await this.getAll();
+    return ghosts.filter(g => g.entityType === entityType);
   }
 
   /**
-   * Get ghosts by session ID
+   * Get ghosts by session ID (indexed via provenance.sessionId)
    */
   async getBySessionId(sessionId: string): Promise<GhostRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    return this.getByIndex('bySessionId', sessionId);
   }
 
   /**
-   * Get ghosts by operation type
+   * Get ghosts by operation type (scan fallback)
    */
   async getByOperation(operation: 'create' | 'update' | 'delete'): Promise<GhostRecord[]> {
-    return this.getByIndex('operation', operation);
+    const ghosts = await this.getAll();
+    return ghosts.filter(g => g.operation === operation);
   }
 
   /**
-   * Get ghosts within a time range
+   * Get ghosts within a time range (by createdAt index)
    */
   async getByTimeRange(startTime: Date, endTime: Date): Promise<GhostRecord[]> {
     const range = IDBKeyRange.bound(startTime.getTime(), endTime.getTime());
-    return this.getByIndex('timestamp', range);
+    return this.getByIndex('byCreatedAt', range);
   }
 
   /**
@@ -205,7 +209,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
   async restoreEntityTo(entityId: string, timestamp: number): Promise<any | null> {
     const targetGhost = await this.getAtTimestamp(entityId, timestamp);
     
-    if (!targetGhost || !targetGhost.entityType || !targetGhost.sessionId) {
+    if (!targetGhost || !targetGhost.entityType || !targetGhost.provenance?.sessionId) {
       return null;
     }
 
@@ -213,7 +217,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
     await this.createSnapshot(
       entityId,
       targetGhost.entityType,
-      targetGhost.sessionId,
+      targetGhost.provenance.sessionId,
       'update',
       targetGhost.state,
       {
@@ -340,7 +344,7 @@ export class GhostsRepository extends BaseRepository<GhostRecord> {
     entityType?: string
   ): Promise<string[]> {
     const range = IDBKeyRange.bound(startTime, endTime);
-    const ghosts = await this.getByIndex('timestamp', range);
+    const ghosts = await this.getByIndex('byCreatedAt', range);
     
     const entityIds = ghosts
       .filter(ghost => !entityType || ghost.entityType === entityType)

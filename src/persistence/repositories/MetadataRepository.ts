@@ -1,47 +1,53 @@
 // // Metadata Repository - Manages metadata records
 
 import { BaseRepository } from '../BaseRepository';
-import { MetadataRecord } from './types';
+import { MetadataRecord } from '../types';
 
 export class MetadataRepository extends BaseRepository<MetadataRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Metadata');
+    super(db, 'metadata');
   }
 
   /**
    * Get metadata by entity ID
    */
   async getByEntityId(entityId: string): Promise<MetadataRecord[]> {
-    return this.getByIndex('entityId', entityId);
+    const all = await this.getAll();
+    return all.filter(m => m.entityId === entityId);
   }
 
   /**
    * Get metadata by entity type
    */
   async getByEntityType(entityType: string): Promise<MetadataRecord[]> {
-    return this.getByIndex('entityType', entityType);
+    const all = await this.getAll();
+    return all.filter(m => m.entityType === entityType);
   }
 
   /**
    * Get metadata by key
    */
   async getByKey(key: string): Promise<MetadataRecord[]> {
-    return this.getByIndex('key', key);
+    const all = await this.getAll();
+    return all.filter(m => m.key === key);
   }
 
   /**
    * Get metadata by session ID
    */
   async getBySessionId(sessionId: string): Promise<MetadataRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    const all = await this.getAll();
+    return all.filter(m => m.sessionId === sessionId);
   }
 
   /**
    * Get metadata created within a date range
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<MetadataRecord[]> {
-    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    const start = startDate.getTime();
+    const end = endDate.getTime();
+    const all = await this.getAll();
+    return all.filter(m => m.createdAt >= start && m.createdAt <= end);
   }
 
   /**

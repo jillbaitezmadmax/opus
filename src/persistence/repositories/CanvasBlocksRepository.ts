@@ -5,14 +5,14 @@ import { CanvasBlockRecord } from '../types';
 
 export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'CanvasBlocks');
+    super(db, 'canvas_blocks');
   }
 
   /**
    * Get blocks by document ID
    */
   async getByDocumentId(documentId: string): Promise<CanvasBlockRecord[]> {
-    const blocks = await this.getByIndex('documentId', documentId);
+    const blocks = await this.getByIndex('byDocumentId', documentId);
     return blocks.sort((a, b) => a.order - b.order);
   }
 
@@ -20,21 +20,23 @@ export class CanvasBlocksRepository extends BaseRepository<CanvasBlockRecord> {
    * Get blocks by session ID
    */
   async getBySessionId(sessionId: string): Promise<CanvasBlockRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    return this.getByIndex('bySessionId', sessionId);
   }
 
   /**
    * Get blocks by type
    */
   async getByType(type: string): Promise<CanvasBlockRecord[]> {
-    return this.getByIndex('type', type);
+    const allBlocks = await this.getAll();
+    return allBlocks.filter(block => block.type === type);
   }
 
   /**
    * Get blocks by parent ID (child blocks)
    */
   async getByParentId(parentId: string): Promise<CanvasBlockRecord[]> {
-    const blocks = await this.getByIndex('parentId', parentId);
+    const allBlocks = await this.getAll();
+    const blocks = allBlocks.filter(block => block.parentId === parentId);
     return blocks.sort((a, b) => a.order - b.order);
   }
 

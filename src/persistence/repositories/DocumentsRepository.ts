@@ -1,32 +1,33 @@
 // Documents Repository - Manages document records
 
 import { BaseRepository } from '../BaseRepository';
-import { DocumentRecord } from './types';
+import { DocumentRecord } from '../types';
 
 export class DocumentsRepository extends BaseRepository<DocumentRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Documents');
+    super(db, 'documents');
   }
 
   /**
    * Get documents by session ID
    */
   async getBySessionId(sessionId: string): Promise<DocumentRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    const allDocuments = await this.getAll();
+    return allDocuments.filter(doc => doc.sessionId === sessionId);
   }
 
   /**
    * Get documents by user ID
    */
   async getByUserId(userId: string): Promise<DocumentRecord[]> {
-    return this.getByIndex('userId', userId);
+    return this.getByIndex('byUserId', userId);
   }
 
   /**
    * Get documents by type
    */
   async getByType(type: string): Promise<DocumentRecord[]> {
-    return this.getByIndex('type', type);
+    return this.getByIndex('byType', type);
   }
 
   /**
@@ -34,7 +35,7 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<DocumentRecord[]> {
     const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    return this.getByIndex('byCreatedAt', range);
   }
 
   /**
@@ -79,10 +80,12 @@ export class DocumentsRepository extends BaseRepository<DocumentRecord> {
     offset: number = 0,
     limit: number = 20
   ): Promise<{ documents: DocumentRecord[]; hasMore: boolean }> {
-    const result = await this.getPaginated('sessionId', sessionId, offset, limit);
+    const sessionDocuments = await this.getBySessionId(sessionId);
+    const documents = sessionDocuments.slice(offset, offset + limit);
+    const hasMore = offset + limit < sessionDocuments.length;
     return {
-      documents: result.records,
-      hasMore: result.hasMore
+      documents,
+      hasMore
     };
   }
 

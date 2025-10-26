@@ -1,25 +1,26 @@
 // Threads Repository - Manages thread records
 
 import { BaseRepository } from '../BaseRepository';
-import { ThreadRecord } from './types';
+import { ThreadRecord } from '../types';
 
 export class ThreadsRepository extends BaseRepository<ThreadRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Threads');
+    super(db, 'threads');
   }
 
   /**
    * Get threads by session ID
    */
   async getBySessionId(sessionId: string): Promise<ThreadRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    return this.getByIndex('bySessionId', sessionId);
   }
 
   /**
    * Get threads by user ID
    */
   async getByUserId(userId: string): Promise<ThreadRecord[]> {
-    return this.getByIndex('userId', userId);
+    const all = await this.getAll();
+    return all.filter(thread => thread.userId === userId);
   }
 
   /**
@@ -34,8 +35,10 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
    * Get threads created within a date range
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<ThreadRecord[]> {
-    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    const start = startDate.getTime();
+    const end = endDate.getTime();
+    const all = await this.getAll();
+    return all.filter(thread => thread.createdAt >= start && thread.createdAt <= end);
   }
 
   /**
@@ -172,7 +175,7 @@ export class ThreadsRepository extends BaseRepository<ThreadRecord> {
     offset: number = 0, 
     limit: number = 20
   ): Promise<{ threads: ThreadRecord[]; hasMore: boolean }> {
-    const result = await this.getPaginated('sessionId', sessionId, offset, limit);
+    const result = await this.getPaginated('bySessionId', sessionId, offset, limit);
     return {
       threads: result.records,
       hasMore: result.hasMore

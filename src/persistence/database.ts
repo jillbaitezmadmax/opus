@@ -132,11 +132,13 @@ export async function openDatabase(): Promise<IDBDatabase> {
         
         // Set initial metadata
         const metadataStore = transaction.objectStore('metadata');
+        const now = Date.now(); // Create a timestamp to use for both createdAt and updatedAt
         const schemaVersionRecord: MetadataRecord = {
           id: 'schema_version_record',
           key: 'schema_version',
           value: SCHEMA_VERSION,
-          updatedAt: Date.now()
+          createdAt: now, // <-- ADD THIS LINE
+          updatedAt: now
         };
         metadataStore.add(schemaVersionRecord);
       }

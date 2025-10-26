@@ -12,7 +12,7 @@ import HistoryPanel from './components/HistoryPanel';
 import CompactModelTray from './components/CompactModelTray';
 import { MenuIcon } from './components/Icons';
 import api from './services/extension-api';
-import persistenceService from './services/persistence';
+// legacy persistence removed
 import { StreamingBuffer } from './utils/streamingBuffer';
 import Banner from './components/Banner';
 
@@ -214,6 +214,54 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
+  // LocalStorage helpers for scroll persistence and last session
+  const LS_SCROLL_KEY = 'htos_scroll_positions';
+  const LS_LAST_SESSION_KEY = 'htos_last_session_id';
+
+  const getScrollPositionsMap = (): Record<string, number> => {
+    try {
+      const raw = localStorage.getItem(LS_SCROLL_KEY);
+      return raw ? JSON.parse(raw) as Record<string, number> : {};
+    } catch {
+      return {};
+    }
+  };
+  const saveScrollPositionLS = (sid: string, pos: number) => {
+    if (!sid) return;
+    const map = getScrollPositionsMap();
+    map[sid] = Math.max(0, Math.floor(pos));
+    try { localStorage.setItem(LS_SCROLL_KEY, JSON.stringify(map)); } catch {}
+  };
+  const getScrollPositionLS = (sid: string): number | null => {
+    if (!sid) return null;
+    const map = getScrollPositionsMap();
+    const v = map[sid];
+    return typeof v === 'number' ? v : null;
+  };
+  const setLastActiveSessionLS = (sid: string | null) => {
+    try {
+      if (sid) localStorage.setItem(LS_LAST_SESSION_KEY, sid);
+      else localStorage.removeItem(LS_LAST_SESSION_KEY);
+    } catch {}
+  };
+  const getLastActiveSessionLS = (): string | null => {
+    try { return localStorage.getItem(LS_LAST_SESSION_KEY); } catch { return null; }
+  };
+
+  // Attach scroll saver to the Virtuoso scroller
+  const ScrollerWithSave = React.forwardRef<HTMLDivElement, any>((props, ref) => {
+    const onScroll = (e: any) => {
+      const st = e?.currentTarget?.scrollTop ?? (e?.target as HTMLElement)?.scrollTop ?? 0;
+      if (scrollSaveTimeoutRef.current) window.clearTimeout(scrollSaveTimeoutRef.current);
+      scrollSaveTimeoutRef.current = window.setTimeout(() => {
+        const sid = sessionIdRef.current;
+        if (sid) saveScrollPositionLS(sid, st);
+        lastScrollTopRef.current = st;
+      }, 200) as any;
+    };
+    return <div {...props} ref={ref} onScroll={onScroll} />;
+  });
+
   // Persistence effects for mapping and power user mode settings
   useEffect(() => {
     localStorage.setItem('htos_mapping_enabled', JSON.stringify(mappingEnabled));
@@ -403,9 +451,11 @@ useEffect(() => {
   
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Force flush any pending saves
       try {
-        persistenceService.flush?.();
+        const pos = (virtuosoRef.current as any)?.getState?.()?.scrollTop ?? lastScrollTopRef.current ?? 0;
+        if (currentSessionId) {
+          saveScrollPositionLS(currentSessionId, pos);
+        }
       } catch (e) {
         console.error('Shutdown save failed:', e);
       }
@@ -1036,8 +1086,7 @@ useEffect(() => {
     const bootstrapFromPersistence = async () => {
       setIsInitializing(true);
       try {
-        // One-time legacy cleanup: remove old UI chat/turns
-        try { await persistenceService.clearLegacyHistory?.(); } catch {}
+        // Legacy UI persistence cleanup removed.
         const defaultModels: Record<string, boolean> = LLM_PROVIDERS_CONFIG.reduce<Record<string, boolean>>((acc, provider) => {
           acc[provider.id] = ['claude', 'gemini', 'chatgpt'].includes(provider.id);
           return acc;
@@ -1353,20 +1402,7 @@ useEffect(() => {
     return () => {};
   }, [isHistoryPanelOpen]);
 
-  // Scroll position persistence (before unload only)
-  useEffect(() => {
-    const saveScrollPosition = () => {
-      // With Virtuoso managing scroll, we persist a neutral position
-      const position = 0;
-      persistenceService.saveScrollPosition(position, currentSessionId).catch(console.error);
-    };
-
-    window.addEventListener('beforeunload', saveScrollPosition);
-    return () => {
-      window.removeEventListener('beforeunload', saveScrollPosition);
-      if (scrollSaveTimeoutRef.current) clearTimeout(scrollSaveTimeoutRef.current);
-    };
-  }, [currentSessionId]);
+  // Legacy scroll persistence effect removed; handled by startup shutdown effect above.
 
 
 
@@ -1656,6 +1692,7 @@ useEffect(() => {
   const handleSelectChat = useCallback(async (session: HistorySessionSummary) => {
     const sessionId = session.sessionId;
     setCurrentSessionId(sessionId);
+    setLastActiveSessionLS(sessionId);
     setIsLoading(true);
     try {
       const s: FullSessionPayload = await api.getHistorySession(sessionId) as unknown as FullSessionPayload;
@@ -1717,7 +1754,21 @@ await api.ensurePort({ sessionId });
           setIsContinuationMode(hasAiTurn);
         }
       }
-      // Note: Scroll restoration removed - Virtuoso handles scroll position internally
+      // Restore scroll position for this session or scroll to bottom
+      const savedPos = getScrollPositionLS(sessionId);
+      setTimeout(() => {
+        const v = virtuosoRef.current as any;
+        if (!v) return;
+        try {
+          if (typeof savedPos === 'number') {
+            v.scrollTo?.({ top: savedPos, behavior: 'auto' });
+            lastScrollTopRef.current = savedPos;
+          } else {
+            const idx = loadedMessages.length - 1;
+            v.scrollToIndex?.({ index: idx, align: 'end' });
+          }
+        } catch {}
+      }, 50);
     } catch (error) {
       console.error('Error loading session:', error);
       setMessages([]);
@@ -2030,7 +2081,8 @@ await api.ensurePort({ sessionId });
                   overscan={8}
                   computeItemKey={(index, message) => (message as any).id}
                   increaseViewportBy={{ top: 200, bottom: 800 }}
-                  rangeChanged={(range) => {
+                   components={{ Scroller: ScrollerWithSave }}
+                   rangeChanged={(range) => {
                     // If the last rendered item is at least 2 away from the end, show the button
                     const threshold = 2;
                     const shouldShow = (messages.length - 1) - range.endIndex >= threshold;

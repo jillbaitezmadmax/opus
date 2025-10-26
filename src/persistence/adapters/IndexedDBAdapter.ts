@@ -819,11 +819,21 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
     });
   }
 
+  private resolveStoreName(name: string): string {
+    const map: Record<string, string> = {
+      providerResponses: 'provider_responses',
+      canvasBlocks: 'canvas_blocks',
+      providerContexts: 'provider_contexts',
+    };
+    return map[name] || name;
+  }
+
   // Utility operations
   async count(storeName: string, query?: IDBValidKey | IDBKeyRange): Promise<number> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      const store = this.db!.transaction([storeName], 'readonly').objectStore(storeName);
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readonly').objectStore(resolved);
       return new Promise<number>((resolve, reject) => {
         const request = query ? store.count(query) : store.count();
         request.onsuccess = () => resolve(request.result);
@@ -835,9 +845,63 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
   async clear(storeName: string): Promise<void> {
     return this.withMetrics(async () => {
       this.ensureReady();
-      const store = this.db!.transaction([storeName], 'readwrite').objectStore(storeName);
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readwrite').objectStore(resolved);
       return new Promise<void>((resolve, reject) => {
         const request = store.clear();
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+    });
+  }
+
+  // Compatibility shims for SimpleIndexedDBAdapter-style methods
+  async get(storeName: string, key: IDBValidKey): Promise<any | null> {
+    return this.withMetrics(async () => {
+      this.ensureReady();
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readonly').objectStore(resolved);
+      return new Promise<any | null>((resolve, reject) => {
+        const request = store.get(key);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    });
+  }
+
+  async getAll(storeName: string): Promise<any[]> {
+    return this.withMetrics(async () => {
+      this.ensureReady();
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readonly').objectStore(resolved);
+      return new Promise<any[]>((resolve, reject) => {
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => reject(request.error);
+      });
+    });
+  }
+
+  async put(storeName: string, record: any): Promise<void> {
+    return this.withMetrics(async () => {
+      this.ensureReady();
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readwrite').objectStore(resolved);
+      return new Promise<void>((resolve, reject) => {
+        const request = store.put(record);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+    });
+  }
+
+  async delete(storeName: string, key: IDBValidKey): Promise<void> {
+    return this.withMetrics(async () => {
+      this.ensureReady();
+      const resolved = this.resolveStoreName(storeName);
+      const store = this.db!.transaction([resolved], 'readwrite').objectStore(resolved);
+      return new Promise<void>((resolve, reject) => {
+        const request = store.delete(key);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
       });
@@ -848,10 +912,11 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
     return this.withMetrics(async () => {
       this.ensureReady();
       const data: Record<string, any[]> = {};
-      const storeNames = ['sessions', 'threads', 'turns', 'providerResponses', 'documents', 'canvasBlocks', 'ghosts', 'providerContexts', 'metadata'];
+      const storeNames = ['sessions', 'threads', 'turns', 'provider_responses', 'documents', 'canvas_blocks', 'ghosts', 'provider_contexts', 'metadata'];
 
       for (const storeName of storeNames) {
-        const store = this.db!.transaction([storeName], 'readonly').objectStore(storeName);
+        const resolved = this.resolveStoreName(storeName);
+        const store = this.db!.transaction([resolved], 'readonly').objectStore(resolved);
         data[storeName] = await new Promise<any[]>((resolve, reject) => {
           const request = store.getAll();
           request.onsuccess = () => resolve(request.result);
@@ -869,7 +934,8 @@ export class IndexedDBAdapter implements IPersistenceAdapter {
       
       for (const [storeName, records] of Object.entries(data)) {
         if (records && records.length > 0) {
-          await this.batchCreate(storeName, records);
+          const resolved = this.resolveStoreName(storeName);
+          await this.batchCreate(resolved, records);
         }
       }
     });

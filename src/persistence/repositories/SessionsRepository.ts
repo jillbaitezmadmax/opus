@@ -5,14 +5,15 @@ import { SessionRecord } from '../types';
 
 export class SessionsRepository extends BaseRepository<SessionRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'Sessions');
+    super(db, 'sessions');
   }
 
   /**
    * Get sessions by user ID
    */
   async getByUserId(userId: string): Promise<SessionRecord[]> {
-    return this.getByIndex('userId', userId);
+    const all = await this.getAll();
+    return all.filter(session => session.userId === userId);
   }
 
   /**
@@ -28,14 +29,15 @@ export class SessionsRepository extends BaseRepository<SessionRecord> {
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<SessionRecord[]> {
     const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    return this.getByIndex('byCreatedAt', range);
   }
 
   /**
    * Get sessions by provider
    */
   async getByProvider(provider: string): Promise<SessionRecord[]> {
-    return this.getByIndex('provider', provider);
+    const all = await this.getAll();
+    return all.filter(session => session.provider === provider);
   }
 
   /**

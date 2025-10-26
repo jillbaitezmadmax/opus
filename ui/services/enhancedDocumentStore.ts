@@ -1,5 +1,5 @@
-// Enhanced Document Store - Supports both legacy chrome.storage and new persistence layer
-// Uses feature flags to enable gradual migration
+// Enhanced Document Store - Persistence-backed only, no legacy mode
+// Uses the extension bridge as the persistence layer
 
 import type { DocumentRecord } from '../types';
 import { extensionBridge } from './extensionBridge';
@@ -7,13 +7,14 @@ import { extensionBridge } from './extensionBridge';
 // Bridge-only persistence access
 async function getPersistenceLayer() {
   // Check if extension bridge is available and document persistence is enabled at runtime
-  if (!extensionBridge.isAvailable()) return null;
+  if (!extensionBridge.isAvailable()) throw new Error('Persistence layer not available');
   try {
     const status = await extensionBridge.getPersistenceStatus();
     const enabled = !!(status && status.documentPersistenceEnabled && status.persistenceLayerAvailable);
-    return enabled ? extensionBridge : null;
-  } catch {
-    return null;
+    if (!enabled) throw new Error('Persistence layer disabled');
+    return extensionBridge;
+  } catch (e) {
+    throw new Error('Failed to access persistence layer');
   }
 }
 
@@ -43,17 +44,11 @@ class EnhancedDocumentStore {
   }
 
   /**
-   * Save a document using the appropriate storage method
+   * Save a document using the persistence layer
    */
   async saveDocument(doc: DocumentRecord): Promise<void> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      return this.saveDocumentWithPersistence(doc, persistence);
-    } else {
-      console.warn('[EnhancedDocumentStore] Persistence not available; document not saved:', doc.id);
-      return;
-    }
+    return this.saveDocumentWithPersistence(doc, persistence);
   }
 
   /**
@@ -61,13 +56,7 @@ class EnhancedDocumentStore {
    */
   async loadDocument(id: string): Promise<DocumentRecord | null> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      return this.loadDocumentWithPersistence(id, persistence);
-    } else {
-      console.warn('[EnhancedDocumentStore] Persistence not available; cannot load document:', id);
-      return null;
-    }
+    return this.loadDocumentWithPersistence(id, persistence);
   }
 
   /**
@@ -75,13 +64,7 @@ class EnhancedDocumentStore {
    */
   async deleteDocument(id: string): Promise<void> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      return this.deleteDocumentWithPersistence(id, persistence);
-    } else {
-      console.warn('[EnhancedDocumentStore] Persistence not available; cannot delete document:', id);
-      return;
-    }
+    return this.deleteDocumentWithPersistence(id, persistence);
   }
 
   /**
@@ -89,13 +72,7 @@ class EnhancedDocumentStore {
    */
   async listDocuments(): Promise<EnhancedDocumentSummary[]> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      return this.listDocumentsWithPersistence(persistence);
-    } else {
-      console.warn('[EnhancedDocumentStore] Persistence not available; returning empty document list');
-      return [];
-    }
+    return this.listDocumentsWithPersistence(persistence);
   }
 
   /**
@@ -106,51 +83,25 @@ class EnhancedDocumentStore {
     sourceSessionId?: string,
     initialContent?: any[]
   ): Promise<DocumentRecord> {
-    const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      const doc: DocumentRecord = {
-        id: this.generateId(),
-        title,
-        sourceSessionId,
-        canvasContent: initialContent || [{ type: 'paragraph', children: [{ text: '' }] }],
-        granularity: 'paragraph',
-        isDirty: false,
-        createdAt: Date.now(),
-        lastModified: Date.now(),
-        updatedAt: Date.now(),
-        version: 1,
-        blockCount: initialContent ? this.countBlocks(initialContent) : 0,
-        refinementHistory: [],
-        exportHistory: [],
-        snapshots: [],
-        _tempStorage: false // Important: Mark for permanent storage
-      };
-      await this.saveDocument(doc);
-      return doc;
-    } else {
-      // Create using legacy format
-      const doc: DocumentRecord = {
-        id: this.generateId(),
-        title,
-        sourceSessionId,
-        canvasContent: initialContent || [{ type: 'paragraph', children: [{ text: '' }] }],
-        granularity: 'paragraph',
-        isDirty: false,
-        createdAt: Date.now(),
-        lastModified: Date.now(),
-        updatedAt: Date.now(),
-        version: 1,
-        blockCount: initialContent ? this.countBlocks(initialContent) : 0,
-        refinementHistory: [],
-        exportHistory: [],
-        snapshots: [],
-        _tempStorage: true
-      };
-      
-      await this.saveDocument(doc);
-      return doc;
-    }
+    const doc: DocumentRecord = {
+      id: this.generateId(),
+      title,
+      sourceSessionId,
+      canvasContent: initialContent || [{ type: 'paragraph', children: [{ text: '' }] }],
+      granularity: 'paragraph',
+      isDirty: false,
+      createdAt: Date.now(),
+      lastModified: Date.now(),
+      updatedAt: Date.now(),
+      version: 1,
+      blockCount: initialContent ? this.countBlocks(initialContent) : 0,
+      refinementHistory: [],
+      exportHistory: [],
+      snapshots: [],
+      _tempStorage: false // Always persisted
+    };
+    await this.saveDocument(doc);
+    return doc;
   }
 
   /**
@@ -169,34 +120,7 @@ class EnhancedDocumentStore {
     }
   ): Promise<any> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      return persistence.createGhost(documentId, text, provenance);
-    } else {
-      // Legacy ghost creation (store in document)
-      const doc = await this.loadDocument(documentId);
-      if (!doc) throw new Error(`Document ${documentId} not found`);
-      
-      const ghost = {
-        id: this.generateId(),
-        documentId,
-        text,
-        preview: text.substring(0, 200),
-        provenance,
-        order: (doc as any).ghosts?.length || 0,
-        createdAt: Date.now(),
-        isPinned: false
-      };
-      
-      const updatedDoc = {
-        ...doc,
-        ghosts: [...((doc as any).ghosts || []), ghost],
-        lastModified: Date.now()
-      };
-      
-      await this.saveDocument(updatedDoc);
-      return ghost;
-    }
+    return (persistence as any).createGhost(documentId, text, provenance);
   }
 
   /**
@@ -204,21 +128,12 @@ class EnhancedDocumentStore {
    */
   async getDocumentGhosts(documentId: string): Promise<any[]> {
     const persistence = await getPersistenceLayer();
-    
-    if (persistence) {
-      // Bridge does not yet expose this; return empty list for now
-      try {
-        // If bridge adds support, call persistence.getDocumentGhosts(documentId)
-        if (typeof (persistence as any).getDocumentGhosts === 'function') {
-          return await (persistence as any).getDocumentGhosts(documentId);
-        }
-      } catch {}
-      return [];
-    } else {
-      // Legacy ghost retrieval
-      const doc = await this.loadDocument(documentId);
-      return (doc as any)?.ghosts || [];
-    }
+    try {
+      if (typeof (persistence as any).getDocumentGhosts === 'function') {
+        return await (persistence as any).getDocumentGhosts(documentId);
+      }
+    } catch {}
+    return [];
   }
 
   /**
@@ -226,7 +141,6 @@ class EnhancedDocumentStore {
    */
   enableAutoSave(documentId: string, getDocument: () => DocumentRecord): void {
     throw new Error('Ghost creation via persistence layer not yet implemented');
-    // Legacy auto-save would be handled by the component
   }
 
   /**
@@ -236,14 +150,7 @@ class EnhancedDocumentStore {
     throw new Error('Ghost deletion via persistence layer not yet implemented');
   }
 
-  /**
-   * Migrate legacy documents to new persistence layer
-   */
-  async migrateLegacyDocuments(): Promise<void> {
-    // Legacy migration path removed
-    return;
-  }
-
+  
   /**
    * Check if storage is available
    */

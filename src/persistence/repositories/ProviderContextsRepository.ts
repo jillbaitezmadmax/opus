@@ -5,36 +5,39 @@ import { ProviderContextRecord } from '../types';
 
 export class ProviderContextsRepository extends BaseRepository<ProviderContextRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'ProviderContexts');
+    super(db, 'provider_contexts');
   }
 
   /**
    * Get contexts by session ID
    */
   async getBySessionId(sessionId: string): Promise<ProviderContextRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    return this.getByIndex('bySessionId', sessionId);
   }
 
   /**
-   * Get contexts by provider
+   * Get contexts by providerId
    */
-  async getByProvider(provider: string): Promise<ProviderContextRecord[]> {
-    return this.getByIndex('provider', provider);
+  async getByProvider(providerId: string): Promise<ProviderContextRecord[]> {
+    return this.getByIndex('byProviderId', providerId);
   }
 
   /**
-   * Get contexts by thread ID
+   * Get contexts by thread ID (scan fallback; no index)
    */
   async getByThreadId(threadId: string): Promise<ProviderContextRecord[]> {
-    return this.getByIndex('threadId', threadId);
+    const all = await this.getAll();
+    return all.filter(c => c.threadId === threadId);
   }
 
   /**
-   * Get contexts created within a date range
+   * Get contexts created within a date range (scan fallback)
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<ProviderContextRecord[]> {
-    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    const start = startDate.getTime();
+    const end = endDate.getTime();
+    const all = await this.getAll();
+    return all.filter(c => c.createdAt >= start && c.createdAt <= end);
   }
 
   /**
@@ -48,16 +51,16 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Get contexts by provider and session
    */
-  async getByProviderAndSession(provider: string, sessionId: string): Promise<ProviderContextRecord[]> {
+  async getByProviderAndSession(providerId: string, sessionId: string): Promise<ProviderContextRecord[]> {
     const sessionContexts = await this.getBySessionId(sessionId);
-    return sessionContexts.filter(context => context.providerId === provider);
+    return sessionContexts.filter(context => context.providerId === providerId);
   }
 
   /**
    * Get latest context for a provider in a session
    */
-  async getLatestByProviderAndSession(provider: string, sessionId: string): Promise<ProviderContextRecord | null> {
-    const contexts = await this.getByProviderAndSession(provider, sessionId);
+  async getLatestByProviderAndSession(providerId: string, sessionId: string): Promise<ProviderContextRecord | null> {
+    const contexts = await this.getByProviderAndSession(providerId, sessionId);
     return contexts.length > 0 
       ? contexts.sort((a, b) => b.updatedAt - a.updatedAt)[0]
       : null;
@@ -140,7 +143,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Get provider performance statistics
    */
-  async getProviderStats(provider?: string): Promise<{
+  async getProviderStats(providerId?: string): Promise<{
     totalContexts: number;
     activeContexts: number;
     averageContextLifetime: number;
@@ -148,8 +151,8 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   }> {
     let contexts: ProviderContextRecord[];
     
-    if (provider) {
-      contexts = await this.getByProvider(provider);
+    if (providerId) {
+      contexts = await this.getByProvider(providerId);
     } else {
       contexts = await this.getAll();
     }
@@ -181,12 +184,12 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Search contexts by content
    */
-  async searchByContent(query: string, provider?: string): Promise<ProviderContextRecord[]> {
+  async searchByContent(query: string, providerId?: string): Promise<ProviderContextRecord[]> {
     const searchQuery = query.toLowerCase();
     let contexts: ProviderContextRecord[];
 
-    if (provider) {
-      contexts = await this.getByProvider(provider);
+    if (providerId) {
+      contexts = await this.getByProvider(providerId);
     } else {
       contexts = await this.getAll();
     }
@@ -228,8 +231,8 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Deactivate contexts for a specific provider in a session
    */
-  async deactivateProviderContexts(provider: string, sessionId: string): Promise<void> {
-    const contexts = await this.getByProviderAndSession(provider, sessionId);
+  async deactivateProviderContexts(providerId: string, sessionId: string): Promise<void> {
+    const contexts = await this.getByProviderAndSession(providerId, sessionId);
     const activeContexts = contexts.filter(c => c.isActive);
     
     const updates = activeContexts.map(context => ({
@@ -280,7 +283,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
    */
   async getContextTimeline(
     sessionId?: string,
-    provider?: string,
+    providerId?: string,
     startTime?: number,
     endTime?: number
   ): Promise<ProviderContextRecord[]> {
@@ -288,15 +291,15 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
 
     if (sessionId) {
       contexts = await this.getBySessionId(sessionId);
-    } else if (provider) {
-      contexts = await this.getByProvider(provider);
+    } else if (providerId) {
+      contexts = await this.getByProvider(providerId);
     } else {
       contexts = await this.getAll();
     }
 
     // Filter by provider if sessionId was used but provider is also specified
-    if (sessionId && provider) {
-      contexts = contexts.filter(c => c.providerId === provider);
+    if (sessionId && providerId) {
+      contexts = contexts.filter(c => c.providerId === providerId);
     }
 
     // Filter by time range
@@ -314,7 +317,7 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Get context data size statistics
    */
-  async getContextSizeStats(provider?: string): Promise<{
+  async getContextSizeStats(providerId?: string): Promise<{
     totalContexts: number;
     totalSize: number;
     averageSize: number;
@@ -329,8 +332,8 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   }> {
     let contexts: ProviderContextRecord[];
     
-    if (provider) {
-      contexts = await this.getByProvider(provider);
+    if (providerId) {
+      contexts = await this.getByProvider(providerId);
     } else {
       contexts = await this.getAll();
     }
@@ -373,8 +376,8 @@ export class ProviderContextsRepository extends BaseRepository<ProviderContextRe
   /**
    * Get recent contexts for a provider
    */
-  async getRecentByProvider(provider: string, limit: number = 20): Promise<ProviderContextRecord[]> {
-    const contexts = await this.getByProvider(provider);
+  async getRecentByProvider(providerId: string, limit: number = 20): Promise<ProviderContextRecord[]> {
+    const contexts = await this.getByProvider(providerId);
     return contexts
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, limit);

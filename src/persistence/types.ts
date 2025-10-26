@@ -252,7 +252,7 @@ export interface MetadataRecord {
   entityId?: string;               // Missing property causing errors
   entityType?: string;             // Missing property causing errors
   sessionId?: string;              // Missing property causing errors
-  createdAt?: number;              // Missing property causing errors
+  createdAt: number;              // Missing property causing errors
   value: any;
   updatedAt: number;
 }

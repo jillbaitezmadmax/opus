@@ -66,13 +66,8 @@ self.BusController = BusController;
 // PERSISTENCE LAYER INITIALIZATION
 // ============================================================================
 async function initializePersistence() {
-  if (!HTOS_USE_PERSISTENCE_ADAPTER) {
-    console.log('[SW] Persistence adapter disabled by feature flag');
-    return null;
-  }
-  
   const operationId = persistenceMonitor.startOperation('INITIALIZE_PERSISTENCE', {
-    useAdapter: HTOS_USE_PERSISTENCE_ADAPTER,
+    useAdapter: true,
     enableDocumentPersistence: HTOS_ENABLE_DOCUMENT_PERSISTENCE
   });
   
@@ -99,7 +94,7 @@ async function initializePersistence() {
     persistenceMonitor.endOperation(operationId, null, error);
     const handledError = await errorHandler.handleError(error, {
       operation: 'initializePersistence',
-      context: { useAdapter: HTOS_USE_PERSISTENCE_ADAPTER }
+      context: { useAdapter: true }
     });
     console.error('[SW] ❌ Failed to initialize persistence layer:', handledError);
     // Do NOT fallback silently; propagate error to fail initialization
@@ -118,29 +113,18 @@ async function initializeSessionManager(persistenceLayer) {
     sessionManager = new SessionManager();
     sessionManager.sessions = __HTOS_SESSIONS;
     
-    if (HTOS_USE_PERSISTENCE_ADAPTER) {
-      // Import and create SimpleIndexedDBAdapter for SessionManager
-      const { SimpleIndexedDBAdapter } = await import('./persistence/SimpleIndexedDBAdapter.js');
-      const simpleAdapter = new SimpleIndexedDBAdapter();
-      
-      console.log('[SW] Initializing SimpleIndexedDBAdapter for SessionManager...');
-      await simpleAdapter.init();
-      
-      await sessionManager.initialize({
-        adapter: simpleAdapter,
-        usePersistenceAdapter: true
-      });
-      
-      console.log('[SW:INIT:6] ✅ Session manager initialized with persistence');
-    } else {
-      // Legacy mode without persistence
-      await sessionManager.initialize({
-        adapter: null,
-        usePersistenceAdapter: false
-      });
-      
-      console.log('[SW:INIT:6] ✅ Session manager initialized (legacy mode)');
-    }
+    // Always initialize with persistence adapter
+    const { SimpleIndexedDBAdapter } = await import('./persistence/SimpleIndexedDBAdapter.js');
+    const simpleAdapter = new SimpleIndexedDBAdapter();
+    
+    console.log('[SW] Initializing SimpleIndexedDBAdapter for SessionManager...');
+    await simpleAdapter.init();
+    
+    await sessionManager.initialize({
+      adapter: simpleAdapter
+    });
+    
+    console.log('[SW:INIT:6] ✅ Session manager initialized with persistence');
     
     return sessionManager;
   } catch (error) {
@@ -391,10 +375,7 @@ async function initializeGlobalServices() {
     console.log("[SW] 🚀 Initializing global services...");
     
     // 1. Initialize persistence layer FIRST
-    let pl = null;
-    if (HTOS_USE_PERSISTENCE_ADAPTER) {
-      pl = await initializePersistence();
-    }
+    const pl = await initializePersistence();
     // Expose persistence layer globally for runtime checks
     persistenceLayer = pl;
     self.__HTOS_PERSISTENCE_LAYER = pl;
@@ -428,7 +409,7 @@ async function initializeGlobalServices() {
 
 // ============================================================================
 // UNIFIED MESSAGE HANDLER
-// Handles both legacy history operations AND enhanced persistence operations
+// Handles history operations and persistence-backed actions
 // ============================================================================
 async function handleUnifiedMessage(message, sender, sendResponse) {
   try {
@@ -440,36 +421,22 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
     
     switch (message.type) {
       // ========================================================================
-      // HISTORY OPERATIONS (Legacy compatibility)
+      // HISTORY OPERATIONS
       // ========================================================================
       case 'GET_FULL_HISTORY': {
-        // Prefer persistence layer when available
+        // Always use persistence layer for history
         let sessions = [];
         try {
-          if (sm.getPersistenceStatus?.().usePersistenceAdapter && sm.adapter?.isReady()) {
-            const allSessions = await sm.adapter.getAll('sessions');
-            sessions = allSessions.map(r => ({
-              id: r.id,
-              sessionId: r.id,
-              title: r.title || 'New Chat',
-              startTime: r.createdAt,
-              lastActivity: r.updatedAt || r.lastActivity,
-              messageCount: r.turnCount || 0,
-              firstMessage: ''
-            })).sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
-          } else {
-            sessions = Object.values(sm.sessions || {})
-              .map(s => ({
-                id: s.sessionId,
-                sessionId: s.sessionId,
-                title: s.title || s.turns?.[0]?.text?.slice(0, 50) || 'New Chat',
-                startTime: s.createdAt,
-                lastActivity: s.lastActivity,
-                messageCount: (s.turns?.length || 0),
-                firstMessage: s.turns?.[0]?.text || ''
-              }))
-              .sort((a, b) => b.lastActivity - a.lastActivity);
-          }
+          const allSessions = await sm.adapter.getAll('sessions');
+          sessions = allSessions.map(r => ({
+            id: r.id,
+            sessionId: r.id,
+            title: r.title || 'New Chat',
+            startTime: r.createdAt,
+            lastActivity: r.updatedAt || r.lastActivity,
+            messageCount: r.turnCount || 0,
+            firstMessage: ''
+          })).sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
         } catch (e) {
           console.error('[SW] Failed to build full history from persistence:', e);
           sessions = [];
@@ -550,13 +517,13 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
           success: true, 
           data: { 
             availableProviders: providerRegistry.listProviders(),
-            persistenceEnabled: HTOS_USE_PERSISTENCE_ADAPTER,
+            persistenceEnabled: true,
             documentsEnabled: HTOS_ENABLE_DOCUMENT_PERSISTENCE,
             sessionManagerType: sm?.constructor?.name || 'unknown',
             persistenceLayerAvailable: !!layer,
             usePersistenceAdapter: !!ps.usePersistenceAdapter,
             adapterReady: !!ps.adapterReady,
-            activeMode: ps.usePersistenceAdapter ? 'indexeddb' : 'legacy'
+            activeMode: 'indexeddb'
           }
         });
         return true;
@@ -645,27 +612,7 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
         return true;
       }
         
-      case 'ENABLE_PERSISTENCE': {
-        if (sm.enablePersistenceAdapter) {
-          await sm.enablePersistenceAdapter();
-          globalThis.HTOS_USE_PERSISTENCE_ADAPTER = true;
-          sendResponse({ success: true });
-        } else {
-          sendResponse({ success: false, error: 'Persistence adapter not available' });
-        }
-        return true;
-      }
-        
-      case 'DISABLE_PERSISTENCE': {
-        if (sm.disablePersistenceAdapter) {
-          await sm.disablePersistenceAdapter();
-          globalThis.HTOS_USE_PERSISTENCE_ADAPTER = false;
-          sendResponse({ success: true });
-        } else {
-          sendResponse({ success: false, error: 'Persistence adapter not available' });
-        }
-        return true;
-      }
+
         
       // ========================================================================
       // DOCUMENT OPERATIONS (When document persistence is enabled)
@@ -850,13 +797,7 @@ chrome.action?.onClicked.addListener(async () => {
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[SW] Extension installed/updated:', details.reason);
   
-  if (details.reason === 'update' && HTOS_USE_PERSISTENCE_ADAPTER) {
-    // Trigger migration on update
-    const sm = await initializeSessionManager();
-    if (sm.migrateLegacySessions) {
-      await sm.migrateLegacySessions();
-    }
-  }
+  // Session migration disabled
 });
 
 // ============================================================================

@@ -1,47 +1,51 @@
 // Provider Responses Repository - Manages provider response records
 
 import { BaseRepository } from '../BaseRepository';
-import { ProviderResponseRecord } from './types';
+import { ProviderResponseRecord } from '../types';
 
 export class ProviderResponsesRepository extends BaseRepository<ProviderResponseRecord> {
   constructor(db: IDBDatabase) {
-    super(db, 'ProviderResponses');
+    super(db, 'provider_responses');
   }
 
   /**
-   * Get responses by turn ID
+   * Get responses by AI turn ID
    */
   async getByTurnId(turnId: string): Promise<ProviderResponseRecord[]> {
-    return this.getByIndex('turnId', turnId);
+    return this.getByIndex('byAiTurnId', turnId);
   }
 
   /**
-   * Get responses by provider
+   * Get responses by providerId
    */
-  async getByProvider(provider: string): Promise<ProviderResponseRecord[]> {
-    return this.getByIndex('provider', provider);
+  async getByProvider(providerId: string): Promise<ProviderResponseRecord[]> {
+    return this.getByIndex('byProviderId', providerId);
   }
 
   /**
-   * Get responses by session ID
+   * Get responses by session ID (scan fallback; no direct index)
    */
   async getBySessionId(sessionId: string): Promise<ProviderResponseRecord[]> {
-    return this.getByIndex('sessionId', sessionId);
+    const all = await this.getAll();
+    return all.filter(r => r.sessionId === sessionId);
   }
 
   /**
-   * Get responses by status
+   * Get responses by status (scan fallback; no index)
    */
-  async getByStatus(status: 'pending' | 'completed' | 'error' | 'cancelled'): Promise<ProviderResponseRecord[]> {
-    return this.getByIndex('status', status);
+  async getByStatus(status: 'pending' | 'completed' | 'error' | 'cancelled' | 'streaming'): Promise<ProviderResponseRecord[]> {
+    const all = await this.getAll();
+    return all.filter(r => r.status === status);
   }
 
   /**
-   * Get responses created within a date range
+   * Get responses created within a date range (scan fallback)
    */
   async getByDateRange(startDate: Date, endDate: Date): Promise<ProviderResponseRecord[]> {
-    const range = IDBKeyRange.bound(startDate.getTime(), endDate.getTime());
-    return this.getByIndex('createdAt', range);
+    const start = startDate.getTime();
+    const end = endDate.getTime();
+    const all = await this.getAll();
+    return all.filter(r => r.createdAt >= start && r.createdAt <= end);
   }
 
   /**
@@ -62,10 +66,10 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
    * Get responses by provider and status
    */
   async getByProviderAndStatus(
-    provider: string, 
-    status: 'pending' | 'completed' | 'error' | 'cancelled'
+    providerId: string, 
+    status: 'pending' | 'completed' | 'error' | 'cancelled' | 'streaming'
   ): Promise<ProviderResponseRecord[]> {
-    const allResponses = await this.getByProvider(provider);
+    const allResponses = await this.getByProvider(providerId);
     return allResponses.filter((r: ProviderResponseRecord) => r.status === status);
   }
 
@@ -109,7 +113,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   /**
    * Get provider performance statistics
    */
-  async getProviderStats(provider?: string): Promise<{
+  async getProviderStats(providerId?: string): Promise<{
     totalResponses: number;
     completedResponses: number;
     failedResponses: number;
@@ -124,8 +128,8 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   }> {
     let responses: ProviderResponseRecord[];
     
-    if (provider) {
-      responses = await this.getByProvider(provider);
+    if (providerId) {
+      responses = await this.getByProvider(providerId);
     } else {
       responses = await this.getAll();
     }
@@ -151,7 +155,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
     };
 
     // If no specific provider, include breakdown by provider
-    if (!provider) {
+    if (!providerId) {
       const byProvider: Record<string, any> = {};
       const providers = Array.from(new Set(responses.map((r: ProviderResponseRecord) => r.providerId)));
       
@@ -177,8 +181,8 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   /**
    * Get recent responses for a provider
    */
-  async getRecentByProvider(provider: string, limit: number = 20): Promise<ProviderResponseRecord[]> {
-    const responses = await this.getByProvider(provider);
+  async getRecentByProvider(providerId: string, limit: number = 20): Promise<ProviderResponseRecord[]> {
+    const responses = await this.getByProvider(providerId);
     return responses
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, limit);
@@ -187,12 +191,12 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   /**
    * Search responses by content
    */
-  async searchByContent(query: string, provider?: string): Promise<ProviderResponseRecord[]> {
+  async searchByContent(query: string, providerId?: string): Promise<ProviderResponseRecord[]> {
     const searchQuery = query.toLowerCase();
     let responses: ProviderResponseRecord[];
 
-    if (provider) {
-      responses = await this.getByProvider(provider);
+    if (providerId) {
+      responses = await this.getByProvider(providerId);
     } else {
       responses = await this.getAll();
     }
@@ -216,7 +220,7 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   /**
    * Get token usage statistics
    */
-  async getTokenUsageStats(provider?: string): Promise<{
+  async getTokenUsageStats(providerId?: string): Promise<{
     totalPromptTokens: number;
     totalCompletionTokens: number;
     totalTokens: number;
@@ -225,8 +229,8 @@ export class ProviderResponsesRepository extends BaseRepository<ProviderResponse
   }> {
     let responses: ProviderResponseRecord[];
     
-    if (provider) {
-      responses = await this.getByProvider(provider);
+    if (providerId) {
+      responses = await this.getByProvider(providerId);
     } else {
       responses = await this.getAll();
     }
