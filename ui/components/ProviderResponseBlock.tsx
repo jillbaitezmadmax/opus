@@ -19,6 +19,9 @@ interface ProviderResponseBlockProps {
   isLoading: boolean;
   currentAppStep: AppStep;
   isReducedMotion?: boolean;
+  aiTurnId?: string;
+  sessionId?: string;
+  onEnterComposerMode?: () => void;
 }
 
 const CopyButton = ({ text, label }: { text: string; label: string }) => {
@@ -59,7 +62,10 @@ const ProviderResponseBlock = ({
   providerResponses,
   providerStates, 
   isLoading, 
-  isReducedMotion = false
+  isReducedMotion = false,
+  aiTurnId,
+  sessionId,
+  onEnterComposerMode
 }: ProviderResponseBlockProps) => {
   // Normalize responses
   const effectiveProviderResponses = providerResponses 
@@ -315,6 +321,39 @@ const ProviderResponseBlock = ({
           flexShrink: 0,
           height: '32px'
         }}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              try {
+                onEnterComposerMode?.();
+                const provenance = {
+                  providerId,
+                  aiTurnId: aiTurnId,
+                  sessionId: sessionId,
+                  granularity: 'full',
+                  sourceText: state?.text || '',
+                  responseType: 'batch',
+                  timestamp: Date.now()
+                } as any;
+                setTimeout(() => {
+                  document.dispatchEvent(new CustomEvent('extract-to-canvas', { detail: { text: state?.text || '', provenance }, bubbles: true }));
+                }, 50);
+              } catch (err) { console.error('Copy to canvas failed', err); }
+            }}
+            aria-label={`Send ${provider?.name || providerId} to Canvas`}
+            style={{
+              background: '#1d4ed8',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              padding: '4px 8px',
+              color: '#ffffff',
+              fontSize: '12px',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            ↘ Send to Canvas
+          </button>
           <CopyButton text={state?.text} label={`Copy ${provider?.name || providerId} response`} />
           <ProviderPill id={providerId as any} />
         </div>

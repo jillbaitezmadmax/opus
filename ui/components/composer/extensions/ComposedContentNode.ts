@@ -95,14 +95,14 @@ export const ComposedContent = Node.create({
           background: rgba(${borderColor.slice(1).match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '107, 114, 128'}, 0.05);
           border-radius: 4px;
           position: relative;
-          cursor: pointer;
+          cursor: text;
           transition: all 0.2s ease;
         `,
         'data-composer-block': 'true',
         'data-turn-id': provenance?.aiTurnId || '',
         'data-provider-id': providerId,
         'data-preview-text': previewSnippet,
-        title: `${providerId} • ${provenance?.granularity || 'full'}\nClick to jump to source`,
+        title: `${providerId} • ${provenance?.granularity || 'full'}\nUse badge to jump to source`,
       }), 
       0,
     ];
@@ -161,10 +161,14 @@ export const ComposedContent = Node.create({
       const borderColor = providerColors[baseProviderId] || '#6b7280';
       const responseType = provenance?.responseType || 'batch';
       const typeLabel = responseType === 'batch' ? 'B' : responseType === 'synthesis' ? 'S' : 'M';
+      const aiTurnIdStr = provenance?.aiTurnId || '';
+      const sessionIdStr = provenance?.sessionId || '';
       
       dom.className = 'composed-block';
       dom.setAttribute('data-composer-block', 'true');
-      dom.setAttribute('data-turn-id', provenance?.aiTurnId || '');
+      dom.setAttribute('data-turn-id', aiTurnIdStr);
+      dom.setAttribute('data-ai-turn-id', aiTurnIdStr);
+      dom.setAttribute('data-session-id', sessionIdStr);
       dom.setAttribute('data-provider-id', providerIdFull);
       
       const rgbColor = borderColor.slice(1).match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '107, 114, 128';
@@ -176,11 +180,12 @@ export const ComposedContent = Node.create({
         background: rgba(${rgbColor}, 0.05);
         border-radius: 4px;
         position: relative;
-        cursor: pointer;
+        cursor: text;
+        user-select: text;
         transition: all 0.2s ease;
       `;
       
-      // Provider badge overlay
+      // Provider badge overlay (include turn id)
       const badge = document.createElement('div');
       badge.style.cssText = `
         position: absolute;
@@ -196,26 +201,43 @@ export const ComposedContent = Node.create({
         font-size: 10px;
         font-weight: 600;
         color: ${borderColor};
-        pointer-events: none;
-        z-index: 10;
+        pointer-events: auto;
+        cursor: pointer;
+        z-index: 100;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
       `;
+      badge.setAttribute('role', 'button');
+      badge.setAttribute('aria-label', `Jump to ${baseProviderId} • Turn ${aiTurnIdStr || '—'}`);
+      badge.title = `Click to jump to source (${baseProviderId})`;
       badge.innerHTML = `
         <span style="width: 6px; height: 6px; border-radius: 50%; background: ${borderColor};"></span>
         <span>${baseProviderId}</span>
+        <span style="opacity: 0.7;">• T${aiTurnIdStr || '—'}</span>
         <span style="opacity: 0.7;">• ${typeLabel}</span>
+        <span style="opacity: 0.7;">↗</span>
       `;
       dom.appendChild(badge);
-      
-      contentDOM.style.cssText = 'position: relative; padding-right: 80px;';
+
+      contentDOM.style.cssText = 'position: relative; padding-right: 80px; cursor: text;';
       dom.appendChild(contentDOM);
-      
+
+      // Tooltip preview text
+      const previewRawForTitle = provenance?.sourceText || provenance?.sourceContext?.fullResponse || 'PROVENANCE DEBUG: SOURCE TEXT MISSING';
+      const previewSnippetForTitle = previewRawForTitle.length > 200 ? previewRawForTitle.substring(0, 197) + '...' : previewRawForTitle;
+      const gran = provenance?.granularity || 'full';
+      const typeFullLabel = responseType === 'batch' ? 'Batch' : responseType === 'synthesis' ? 'Synthesis' : 'Mapping';
+      dom.title = `${baseProviderId} • Turn ${aiTurnIdStr || '—'} • ${gran} • ${typeFullLabel}\n${previewSnippetForTitle}`;
+
       // Hover preview
+      let loggedPreviewOnce = false;
       let hoverCard: HTMLDivElement | null = null;
       let hoverTimeout: NodeJS.Timeout | null = null;
-      
-      const showPreview = () => {
-        if (!provenance?.sourceText) return;
-        
+
+      const showPreview = (evt?: MouseEvent) => {
+        if (!loggedPreviewOnce) {
+          try { console.log('ComposedContent: showPreview fired', { provenance }); } catch {}
+          loggedPreviewOnce = true;
+        }
         // Delay showing preview slightly to avoid flicker
         hoverTimeout = setTimeout(() => {
           hoverCard = document.createElement('div');
@@ -228,7 +250,7 @@ export const ComposedContent = Node.create({
             padding: 12px;
             max-width: 320px;
             min-width: 250px;
-            z-index: 10000;
+            z-index: 999999;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
             pointer-events: none;
             font-size: 13px;
@@ -236,48 +258,57 @@ export const ComposedContent = Node.create({
             color: #e2e8f0;
           `;
           
-          const previewText = provenance.sourceText.length > 200
-            ? provenance.sourceText.substring(0, 197) + '...'
-            : provenance.sourceText;
+          const previewRaw = provenance?.sourceText || provenance?.sourceContext?.fullResponse || 'PROVENANCE DEBUG: SOURCE TEXT MISSING';
+          const previewText = previewRaw.length > 200 ? previewRaw.substring(0, 197) + '...' : previewRaw;
           
-          const typeFullLabel = responseType === 'batch' ? 'Batch' : responseType === 'synthesis' ? 'Synthesis' : 'Mapping';
-          
-          hoverCard.innerHTML = `
+          const header = `
             <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #334155;">
               <span style="width: 8px; height: 8px; border-radius: 50%; background: ${borderColor};"></span>
               <span style="font-size: 11px; color: #94a3b8; font-weight: 600;">${baseProviderId}</span>
               <span style="font-size: 10px; color: #64748b;">• ${typeFullLabel}</span>
-              <span style="font-size: 10px; color: #64748b;">• ${provenance.granularity}</span>
-            </div>
+              <span style="font-size: 10px; color: #64748b;">• ${gran}</span>
+              <span style="font-size: 10px; color: #64748b;">• Turn ${aiTurnIdStr || '—'}</span>
+            </div>`;
+          
+          hoverCard.innerHTML = `${header}
             <div style="color: #cbd5e1; margin-bottom: 8px;">${previewText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-            <div style="font-size: 11px; color: #8b5cf6; font-style: italic; font-weight: 500;">
-              💡 Click to jump to source
-            </div>
-          `;
+            <div style="font-size: 11px; color: #8b5cf6; font-style: italic; font-weight: 500;">💡 Click the badge to jump to source</div>`;
           
           document.body.appendChild(hoverCard);
           
-          // Position card near cursor
+          // Position card near cursor (fallback to block rect)
           const rect = dom.getBoundingClientRect();
           const cardRect = hoverCard.getBoundingClientRect();
+          const clientX = evt?.clientX ?? rect.right;
+          const clientY = evt?.clientY ?? rect.top;
           
-          let top = rect.top - 8;
-          let left = rect.right + 12;
+          let top = clientY - Math.min(24, cardRect.height / 2);
+          let left = clientX + 12;
           
           // Keep card in viewport
-          if (left + cardRect.width > window.innerWidth) {
-            left = rect.left - cardRect.width - 12;
-          }
-          if (top + cardRect.height > window.innerHeight) {
-            top = window.innerHeight - cardRect.height - 12;
-          }
+          if (left + cardRect.width > window.innerWidth) left = rect.left - cardRect.width - 12;
+          if (top + cardRect.height > window.innerHeight) top = window.innerHeight - cardRect.height - 12;
           if (top < 8) top = 8;
+          if (left < 8) left = 8;
           
           hoverCard.style.top = `${top}px`;
           hoverCard.style.left = `${left}px`;
-        }, 150);
+        }, 80);
       };
-      
+
+      const updatePreviewPosition = (evt: MouseEvent) => {
+        if (!hoverCard) return;
+        const cardRect = hoverCard.getBoundingClientRect();
+        let top = evt.clientY - Math.min(24, cardRect.height / 2);
+        let left = evt.clientX + 12;
+        if (left + cardRect.width > window.innerWidth) left = window.innerWidth - cardRect.width - 12;
+        if (top + cardRect.height > window.innerHeight) top = window.innerHeight - cardRect.height - 12;
+        if (top < 8) top = 8;
+        if (left < 8) left = 8;
+        hoverCard.style.top = `${top}px`;
+        hoverCard.style.left = `${left}px`;
+      };
+
       const hidePreview = () => {
         if (hoverTimeout) {
           clearTimeout(hoverTimeout);
@@ -288,35 +319,59 @@ export const ComposedContent = Node.create({
           hoverCard = null;
         }
       };
-      
-      dom.addEventListener('mouseenter', showPreview);
+
+      dom.addEventListener('mouseenter', (e) => showPreview(e));
+      dom.addEventListener('mousemove', updatePreviewPosition);
       dom.addEventListener('mouseleave', hidePreview);
-      
-      // Click to jump
-      dom.addEventListener('click', (e) => {
+
+      badge.addEventListener('mouseenter', () => {
+        badge.style.transform = 'scale(1.05)';
+        badge.style.boxShadow = `0 4px 12px rgba(0,0,0,0.35)`;
+      });
+      badge.addEventListener('mouseleave', () => {
+        badge.style.transform = 'scale(1)';
+        badge.style.boxShadow = 'none';
+      });
+
+      // Prevent editor selection or PM handlers from seeing badge interactions
+      const intercept = (e: Event) => { try { e.stopPropagation(); } catch {} };
+      badge.addEventListener('pointerdown', intercept);
+      badge.addEventListener('mousedown', intercept);
+      badge.addEventListener('mouseup', intercept);
+
+      badge.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        try {
+          console.log('[ComposedContentNode] Badge clicked', {
+            aiTurnId: provenance?.aiTurnId,
+            providerId: provenance?.providerId,
+            sessionId: provenance?.sessionId,
+            provenance,
+          });
+        } catch {}
         const event = new CustomEvent('composer-block-click', {
           detail: { provenance, node, position: getPos() },
           bubbles: true,
+          composed: true,
         });
-        dom.dispatchEvent(event);
+        try { console.log('[ComposedContentNode] Dispatching composer-block-click'); } catch {}
+        document.dispatchEvent(event);
+        try { window.dispatchEvent(event as any); } catch {}
       });
-      
-      // Hover effect
-      dom.addEventListener('mouseenter', () => {
-        dom.style.background = `rgba(${rgbColor}, 0.12)`;
-      });
-      
-      dom.addEventListener('mouseleave', () => {
-        dom.style.background = `rgba(${rgbColor}, 0.05)`;
-      });
-      
-      return {
-        dom,
-        contentDOM,
-        destroy: () => {
-          hidePreview();
+
+      dom.addEventListener('mouseenter', () => { dom.style.background = `rgba(${rgbColor}, 0.12)`; });
+      dom.addEventListener('mouseleave', () => { dom.style.background = `rgba(${rgbColor}, 0.05)`; });
+
+      return { 
+        dom, 
+        contentDOM, 
+        stopEvent: (e: Event) => {
+          const target = e.target as Node | null;
+          const isOnBadge = !!target && (target === badge || badge.contains(target as Node));
+          return isOnBadge; // prevent PM from handling badge events
         },
+        destroy: () => { hidePreview(); }
       };
     };
   }

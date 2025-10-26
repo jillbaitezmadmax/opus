@@ -1,24 +1,24 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor } from '@dnd-kit/core';
-import { CanvasEditorV2 } from './CanvasEditorV2';
-import { CanvasEditorRef } from './CanvasEditorV2';
-import { TurnMessage, AiTurn } from '../../types';
-import ComposerToolbar from './ComposerToolbar';
-// HorizontalChatRail removed in Phase 2 - replaced by NavigatorBar
-import { NavigatorBar } from './NavigatorBar';
-import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
-import { DragData, isValidDragData, GhostData } from '../../types/dragDrop';
-import { ProvenanceData } from './extensions/ComposedContentNode';
-import ResponseViewer from './ResponseViewer';
-import { Granularity } from '../../utils/segmentText';
-import { SaveDialog } from './SaveDialog';
-import type { DocumentRecord } from '../../types';
-import DocumentsHistoryPanel from '../DocumentsHistoryPanel';
-import { ReferenceZone } from './ReferenceZone';
-import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
-import { PERSISTENCE_FEATURE_FLAGS } from '../../../src/persistence/index';
-import { CanvasTray } from './CanvasTray';
-import { CanvasTabData } from './CanvasTab';
+import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor, pointerWithin } from '@dnd-kit/core';
+ import { CanvasEditorV2 } from './CanvasEditorV2';
+ import { CanvasEditorRef } from './CanvasEditorV2';
+ import { TurnMessage, AiTurn } from '../../types';
+ import ComposerToolbar from './ComposerToolbar';
+ // HorizontalChatRail removed in Phase 2 - replaced by NavigatorBar
+ import { NavigatorBar } from './NavigatorBar';
+ import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
+ import { DragData, isValidDragData, GhostData } from '../../types/dragDrop';
+ import { ProvenanceData } from './extensions/ComposedContentNode';
+ import ResponseViewer from './ResponseViewer';
+ import { Granularity } from '../../utils/segmentText';
+ import { SaveDialog } from './SaveDialog';
+ import type { DocumentRecord } from '../../types';
+ import DocumentsHistoryPanel from '../DocumentsHistoryPanel';
+ import { ReferenceZone } from './ReferenceZone';
+ import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
+ import { PERSISTENCE_FEATURE_FLAGS } from '../../../src/persistence/index';
+ import { CanvasTray } from './CanvasTray';
+ import { CanvasTabData } from './CanvasTab';
 
 interface ComposerModeProps {
   allTurns: TurnMessage[];
@@ -42,6 +42,7 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
   const [granularity, setGranularity] = useState<Granularity>('paragraph');
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [dragStartCoordinates, setDragStartCoordinates] = useState<{ x: number; y: number } | null>(null);
+  const [pointerPos, setPointerPos] = useState<{ x: number; y: number } | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -57,23 +58,61 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
   const [showNavigatorBar, setShowNavigatorBar] = useState(true);
   const [canvasTabs, setCanvasTabs] = useState<CanvasTabData[]>([]);
   const [showCanvasTray, setShowCanvasTray] = useState(true);
+  const [workspaceTabId, setWorkspaceTabId] = useState<string | null>(null);
+  const workspaceEditorRef = useRef<CanvasEditorRef>(null);
+  const turnsRef = useRef<ChatTurn[]>([]);
+  const isRefCollapsedRef = useRef<boolean>(false);
+  const [navFlashTick, setNavFlashTick] = useState(0);
 
   const turns = useMemo(() => convertTurnMessagesToChatTurns(allTurns), [allTurns]);
+  useEffect(() => { turnsRef.current = turns; }, [turns]);
+  useEffect(() => { isRefCollapsedRef.current = isReferenceCollapsed; }, [isReferenceCollapsed]);
 
   // Load pinned ghosts when document changes
   useEffect(() => {
+    const localKey = (docId: string) => `composer:pinnedGhosts:${docId}`;
+    const loadLocalGhosts = (docId: string) => {
+      try {
+        const raw = localStorage.getItem(localKey(docId));
+        return raw ? (JSON.parse(raw) as GhostData[]) : [];
+      } catch (e) {
+        console.warn('[ComposerMode] Failed to parse local pinned ghosts', e);
+        return [];
+      }
+    };
+
+    const saveLocalGhosts = (docId: string, ghosts: GhostData[]) => {
+      try {
+        localStorage.setItem(localKey(docId), JSON.stringify(ghosts));
+      } catch (e) {
+        console.warn('[ComposerMode] Failed to save local pinned ghosts', e);
+      }
+    };
+
     const loadGhosts = async () => {
+      const documentId = currentDocument?.id || 'scratch';
+
+      // If persistence is disabled, use localStorage
       if (!PERSISTENCE_FEATURE_FLAGS.ENABLE_GHOST_RAIL) {
+        const local = loadLocalGhosts(documentId);
+        setPinnedGhosts(local || []);
         return;
       }
-      
-      const documentId = currentDocument?.id || 'scratch';
+
       try {
         const ghosts = await enhancedDocumentStore.getDocumentGhosts(documentId);
-        setPinnedGhosts(ghosts || []);
+        if (ghosts && ghosts.length) {
+          setPinnedGhosts(ghosts);
+          saveLocalGhosts(documentId, ghosts);
+        } else {
+          // Fallback to any locally saved ghosts
+          const local = loadLocalGhosts(documentId);
+          setPinnedGhosts(local || []);
+        }
       } catch (error) {
-        console.warn('[ComposerMode] Failed to load ghosts, using in-memory fallback:', error);
-        // Graceful fallback - keep in-memory pins
+        console.warn('[ComposerMode] Failed to load ghosts, using local fallback:', error);
+        const local = loadLocalGhosts(documentId);
+        setPinnedGhosts(local || []);
       }
     };
     
@@ -292,66 +331,96 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
         x: event.activatorEvent.clientX - rect.left,
         y: event.activatorEvent.clientY - rect.top
       });
+      setPointerPos({ x: event.activatorEvent.clientX, y: event.activatorEvent.clientY });
     }
   }, []);
 
+  // Track pointer position during drag for accurate insertion
+  useEffect(() => {
+    if (!isDragging) return;
+    const onPointerMove = (e: PointerEvent) => {
+      setPointerPos({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+    };
+  }, [isDragging]);
+
   const handleDragEnd = useCallback((event: any) => {
-    const { active, over } = event;
+     const { active, over } = event;
 
-    if (over?.id === 'canvas-dropzone' && active?.data?.current) {
-      const payload = active.data.current;
+     if (over?.id === 'canvas-dropzone' && active?.data?.current) {
+       const payload = active.data.current;
 
-      if (payload?.type === 'composer-block' && payload?.text && payload?.provenance) {
-        const prov: ProvenanceData = {
-          ...payload.provenance,
-          timestamp: typeof payload.provenance.timestamp === 'number' ? payload.provenance.timestamp : Date.now(),
-        };
-        editorRef.current?.insertComposedContent(payload.text, prov);
-      } else {
-        const dragData: DragData = payload;
-        if (isValidDragData(dragData)) {
-          const mapGranularity = (g: DragData['metadata']['granularity']): ProvenanceData['granularity'] => {
-            switch (g) {
-              case 'paragraph': return 'paragraph';
-              case 'sentence': return 'sentence';
-              case 'word':
-              case 'phrase': return 'sentence';
-              case 'response':
-              case 'turn':
-              default: return 'full';
-            }
-          };
-
-          const providerIdFull = dragData.metadata.providerId;
-          const responseType: ProvenanceData['responseType'] = /-synthesis$/.test(providerIdFull)
-            ? 'synthesis'
-            : /-mapping$/.test(providerIdFull)
-            ? 'mapping'
-            : 'batch';
-          const provenance: ProvenanceData = {
-            sessionId: sessionId || 'current',
-            aiTurnId: dragData.metadata.turnId,
-            providerId: providerIdFull,
-            responseType,
-            responseIndex: 0,
-            timestamp: Date.now(),
-            granularity: mapGranularity(dragData.metadata.granularity),
-            sourceText: dragData.content,
-            sourceContext: dragData.metadata.sourceContext ? { fullResponse: dragData.metadata.sourceContext.fullResponse } : undefined,
-          } as ProvenanceData;
-
-          editorRef.current?.insertComposedContent(
-            dragData.content,
-            provenance
-          );
-        }
+      // Compute target insertion position based on pointer coordinates
+      let insertionPos: number | undefined = undefined;
+      const editorAny = (editorRef.current as any);
+      const pmView = editorAny?.editor?.view;
+      if (pmView && typeof pmView.posAtCoords === 'function' && pointerPos) {
+        const result = pmView.posAtCoords({ left: pointerPos.x, top: pointerPos.y });
+        if (result?.pos) insertionPos = result.pos;
       }
-    }
 
-    setActiveDragData(null);
-    setIsDragging(false);
-    setDragStartCoordinates(null);
-  }, [sessionId]);
+       if (payload?.type === 'composer-block' && payload?.text && payload?.provenance) {
+         const prov: ProvenanceData = {
+           ...payload.provenance,
+           timestamp: typeof payload.provenance.timestamp === 'number' ? payload.provenance.timestamp : Date.now(),
+         };
+        editorRef.current?.insertComposedContent(payload.text, prov, insertionPos);
+       } else {
+         const dragData: DragData = payload;
+         if (isValidDragData(dragData)) {
+           const mapGranularity = (g: DragData['metadata']['granularity']): ProvenanceData['granularity'] => {
+             switch (g) {
+               case 'paragraph': return 'paragraph';
+               case 'sentence': return 'sentence';
+               case 'word':
+               case 'phrase': return 'sentence';
+               case 'response':
+               case 'turn':
+               default: return 'full';
+             }
+           };
+
+           const providerIdFull = dragData.metadata.providerId;
+           const responseType: ProvenanceData['responseType'] = /-synthesis$/.test(providerIdFull)
+             ? 'synthesis'
+             : /-mapping$/.test(providerIdFull)
+             ? 'mapping'
+             : 'batch';
+
+           // Prefer provenance from the payload when present; fall back to mapping
+           const baseProv: ProvenanceData | undefined = (payload && (payload as any).provenance) as ProvenanceData | undefined;
+           const provenance: ProvenanceData = {
+             ...(baseProv || {
+               sessionId: sessionId || 'current',
+               aiTurnId: dragData.metadata.turnId,
+               providerId: providerIdFull,
+               responseType,
+               responseIndex: 0,
+               granularity: mapGranularity(dragData.metadata.granularity),
+             }),
+             timestamp: Date.now(),
+             // Use full response text when available for hover preview, else segment
+             sourceText: baseProv?.sourceText || dragData.metadata.sourceContext?.fullResponse || dragData.content,
+             sourceContext: baseProv?.sourceContext || (dragData.metadata.sourceContext ? { fullResponse: dragData.metadata.sourceContext.fullResponse } : undefined),
+           } as ProvenanceData;
+
+           editorRef.current?.insertComposedContent(
+             dragData.content,
+             provenance,
+             insertionPos
+           );
+         }
+       }
+     }
+
+     setActiveDragData(null);
+     setIsDragging(false);
+     setDragStartCoordinates(null);
+     setPointerPos(null);
+   }, [sessionId, pointerPos]);
 
   const handleTurnSelect = useCallback((index: number) => {
     setCurrentTurnIndex(index);
@@ -415,6 +484,14 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
     const documentId = currentDocument?.id || 'scratch';
     const preview = text.length > 50 ? text.substring(0, 47) + '...' : text;
     
+    const saveLocalGhosts = (ghosts: GhostData[]) => {
+      try {
+        localStorage.setItem(`composer:pinnedGhosts:${documentId}`, JSON.stringify(ghosts));
+      } catch (e) {
+        console.warn('[ComposerMode] Failed to save local pinned ghosts', e);
+      }
+    };
+    
     // Create ghost data
     const ghostData: GhostData = {
       id: `ghost-${Date.now()}-${ghostIdCounter}`,
@@ -444,7 +521,11 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
         );
         // Use persisted ghost if available
         if (persistedGhost) {
-          setPinnedGhosts(prev => [...prev, { ...ghostData, id: persistedGhost.id || ghostData.id }]);
+          setPinnedGhosts(prev => {
+            const next = [...prev, { ...ghostData, id: persistedGhost.id || ghostData.id }];
+            saveLocalGhosts(next);
+            return next;
+          });
           return;
         }
       } catch (error) {
@@ -452,12 +533,25 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
       }
     }
     
-    // Fallback to in-memory
-    setPinnedGhosts(prev => [...prev, ghostData]);
+    // Fallback to in-memory and localStorage
+    setPinnedGhosts(prev => {
+      const next = [...prev, ghostData];
+      saveLocalGhosts(next);
+      return next;
+    });
   }, [currentDocument?.id, ghostIdCounter]);
 
   // Handle unpinning a ghost
   const handleUnpinGhost = useCallback(async (ghostId: string) => {
+    const documentId = currentDocument?.id || 'scratch';
+    const saveLocalGhosts = (ghosts: GhostData[]) => {
+      try {
+        localStorage.setItem(`composer:pinnedGhosts:${documentId}`, JSON.stringify(ghosts));
+      } catch (e) {
+        console.warn('[ComposerMode] Failed to save local pinned ghosts', e);
+      }
+    };
+
     // Try to delete from persistence if enabled
     if (PERSISTENCE_FEATURE_FLAGS.ENABLE_GHOST_RAIL) {
       try {
@@ -467,9 +561,13 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
       }
     }
     
-    // Remove from local state
-    setPinnedGhosts(prev => prev.filter(g => g.id !== ghostId));
-  }, []);
+    // Remove from local state and persist locally
+    setPinnedGhosts(prev => {
+      const next = prev.filter(g => g.id !== ghostId);
+      saveLocalGhosts(next);
+      return next;
+    });
+  }, [currentDocument?.id]);
 
   // Handle extract to canvas from main editor
   const handleExtractToMainFromCanvas = useCallback((content: string, provenance: ProvenanceData) => {
@@ -494,39 +592,97 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
     document.dispatchEvent(event);
   }, []);
 
-  // Handle click-to-jump from composed blocks
+  // Handle click-to-jump from composed blocks with stable listener and robust matching
   useEffect(() => {
     const handleBlockClick = (event: Event) => {
       const customEvent = event as CustomEvent;
-      const { provenance } = customEvent.detail || {};
-      
-      if (provenance?.aiTurnId) {
-        // Find turn index by aiTurnId
-        const turnIndex = turns.findIndex(t => t.id === provenance.aiTurnId);
-        if (turnIndex !== -1) {
-          setCurrentTurnIndex(turnIndex);
-          setSelectedTurn(turns[turnIndex]);
-          
-          // Find and select the response
-          const turn = turns[turnIndex];
-          if (turn.type === 'ai') {
-            const response = turn.responses?.find(r => r.providerId === provenance.providerId);
-            if (response) {
-              setSelectedResponse(response);
-            }
-          }
-          
-          // Expand reference zone if collapsed
-          if (isReferenceCollapsed) {
-            setIsReferenceCollapsed(false);
-          }
+      const { provenance } = (customEvent.detail || {}) as { provenance?: ProvenanceData };
+      try { console.log('[ComposerMode] composer-block-click received', { provenance }); } catch {}
+      if (!provenance) return;
+      const aiTurnId = String(provenance.aiTurnId ?? '');
+      const providerIdFull = String(provenance.providerId ?? '');
+      const baseProviderId = providerIdFull.replace(/-(synthesis|mapping)$/,'');
+      const tlist = turnsRef.current || [];
+      try { console.log('[ComposerMode] turns length', tlist.length); } catch {}
+
+      // Primary match by exact id
+      let turnIndex = tlist.findIndex(t => t.id === aiTurnId);
+      // Fallback: numeric id match (e.g., 'turn-3' vs '3')
+      if (turnIndex === -1) {
+        const num = aiTurnId.replace(/\D+/g, '');
+        if (num) {
+          turnIndex = tlist.findIndex(t => (t.id || '').toString().replace(/\D+/g, '') === num);
         }
       }
+
+      if (turnIndex !== -1) {
+        setCurrentTurnIndex(turnIndex);
+        const turn = tlist[turnIndex];
+        setSelectedTurn(turn);
+
+        if (turn.type === 'ai') {
+          const responses = turn.responses || [];
+          let response = responses.find(r => r.providerId === providerIdFull);
+          if (!response) {
+            const typeSuffix = providerIdFull.endsWith('-synthesis') ? '-synthesis' : providerIdFull.endsWith('-mapping') ? '-mapping' : '';
+            if (typeSuffix) {
+              response = responses.find(r => r.providerId.replace(/-(synthesis|mapping)$/,'') === baseProviderId && r.providerId.endsWith(typeSuffix));
+            }
+          }
+          if (!response) {
+            // Base-only fallback
+            response = responses.find(r => r.providerId.replace(/-(synthesis|mapping)$/,'') === baseProviderId);
+          }
+          if (!response && typeof provenance.responseIndex === 'number') {
+            const candidates = responses.filter(r => r.providerId.replace(/-(synthesis|mapping)$/,'') === baseProviderId);
+            if (candidates[provenance.responseIndex]) response = candidates[provenance.responseIndex];
+          }
+          if (response) {
+            setSelectedResponse(response);
+          } else {
+            setSelectedResponse(undefined);
+          }
+        } else {
+          setSelectedResponse(undefined);
+        }
+
+        if (isRefCollapsedRef.current) {
+          setIsReferenceCollapsed(false);
+        }
+        setNavFlashTick(t => t + 1);
+        try { console.log('[ComposerMode] navigation applied', { turnIndex, aiTurnId, providerIdFull }); } catch {}
+      } else {
+        try { console.warn('[ComposerMode] No matching turn for aiTurnId', { aiTurnId }); } catch {}
+      }
     };
-    
     document.addEventListener('composer-block-click', handleBlockClick);
     return () => document.removeEventListener('composer-block-click', handleBlockClick);
-  }, [turns, isReferenceCollapsed]);
+  }, []);
+
+  // Listen for open-canvas-workspace event to open a full workspace view
+  useEffect(() => {
+    const handleOpenWorkspace = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { tabId } = (customEvent.detail || {}) as { tabId?: string };
+      if (tabId) {
+        setWorkspaceTabId(tabId as string);
+      }
+    };
+    document.addEventListener('open-canvas-workspace', handleOpenWorkspace);
+    return () => document.removeEventListener('open-canvas-workspace', handleOpenWorkspace);
+  }, []);
+
+  // Load selected workspace tab content into the workspace editor
+  useEffect(() => {
+    if (!workspaceTabId) return;
+    const activeWorkspaceTab = canvasTabs.find(t => t.id === workspaceTabId);
+    if (!activeWorkspaceTab) return;
+    const editor = workspaceEditorRef.current as any;
+    if (editor?.setContent && activeWorkspaceTab.content) {
+      const docJson = Array.isArray(activeWorkspaceTab.content) ? { type: 'doc', content: activeWorkspaceTab.content } : activeWorkspaceTab.content;
+      editor.setContent(docJson as any);
+    }
+  }, [workspaceTabId, canvasTabs]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -608,6 +764,7 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           sensors={sensors}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
+          collisionDetection={pointerWithin}
         >
           <div style={{ 
             flex: 1, 
@@ -650,6 +807,7 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
                   setSelectedResponse(resp);
                 }}
                 onExtractToCanvas={handleExtractToCanvas}
+                flashTick={navFlashTick}
               />
             </div>
             <div style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -705,6 +863,152 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           onTabsChange={handleCanvasTabsChange}
         />
       )}
+
+      {/* Full Canvas Workspace Overlay */}
+      {workspaceTabId && (() => {
+        const activeWorkspaceTab = canvasTabs.find(t => t.id === workspaceTabId);
+        if (!activeWorkspaceTab) return null;
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              top: 64,
+              left: 0,
+              right: 0,
+              bottom: 240, // leave tray visible as thumbnails
+              background: '#0b1220',
+              borderTop: '1px solid #334155',
+              borderBottom: '1px solid #334155',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
+              zIndex: 9000,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 12px',
+                borderBottom: '1px solid #334155',
+                background: '#0f172a',
+              }}
+            >
+              <div style={{ flex: 1, color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>
+                Workspace: {activeWorkspaceTab.title}
+              </div>
+              <button
+                onClick={() => setWorkspaceTabId(null)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #334155',
+                  background: 'transparent',
+                  color: '#94a3b8',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+                title="Close workspace view"
+              >
+                × Close
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <CanvasEditorV2
+                ref={workspaceEditorRef}
+                placeholder={`Workspace: ${activeWorkspaceTab.title}`}
+                onChange={() => {
+                  const json: any = workspaceEditorRef.current?.getContent();
+                  setCanvasTabs(prev => prev.map(t => (
+                    t.id === activeWorkspaceTab.id ? { ...t, content: json, updatedAt: Date.now() } : t
+                  )));
+                }}
+              />
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 12px',
+                borderTop: '1px solid #334155',
+                background: '#0f172a',
+              }}
+            >
+              <button
+                onClick={() => {
+                  if (workspaceEditorRef.current) {
+                    const json: any = workspaceEditorRef.current.getContent();
+                    const extractions: { text: string; provenance: ProvenanceData }[] = [];
+                    let plainText = '';
+
+                    const extractText = (node: any): string => {
+                      if (!node) return '';
+                      if (typeof node.text === 'string') return node.text;
+                      const children = Array.isArray(node.content) ? node.content : [];
+                      return children.map(extractText).join('');
+                    };
+
+                    const walk = (node: any, inside: boolean = false) => {
+                      if (!node) return;
+                      const isComposed = node.type === 'composedContent' && node.attrs?.provenance;
+                      if (isComposed) {
+                        const text = extractText(node);
+                        if (text.trim()) {
+                          extractions.push({ text, provenance: node.attrs.provenance as ProvenanceData });
+                        }
+                      } else if (!inside) {
+                        plainText += extractText(node);
+                      }
+
+                      const children = Array.isArray(node.content) ? node.content : [];
+                      const nextInside = inside || !!isComposed;
+                      for (const child of children) walk(child, nextInside);
+                    };
+
+                    walk(json);
+
+                    for (const item of extractions) {
+                      handleExtractToMainFromCanvas(item.text, item.provenance);
+                    }
+
+                    if (plainText.trim()) {
+                      const provenance: ProvenanceData = {
+                        sessionId: 'canvas',
+                        aiTurnId: activeWorkspaceTab.id,
+                        providerId: 'canvas',
+                        responseType: 'batch',
+                        responseIndex: 0,
+                        timestamp: Date.now(),
+                        granularity: 'full',
+                        sourceText: plainText,
+                      };
+                      handleExtractToMainFromCanvas(plainText, provenance);
+                    }
+                  }
+                }}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #334155',
+                  background: '#1e293b',
+                  color: '#e2e8f0',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+                title="Extract workspace to main canvas"
+              >
+                ↑ Extract to Main
+              </button>
+              <div style={{ flex: 1 }} />
+              <div style={{ fontSize: 11, color: '#64748b' }}>
+                {new Date(activeWorkspaceTab.updatedAt || Date.now()).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <SaveDialog
         isOpen={showSaveDialog}

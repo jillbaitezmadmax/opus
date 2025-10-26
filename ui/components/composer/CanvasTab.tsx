@@ -84,10 +84,65 @@ export const CanvasTab = forwardRef<CanvasScratchpadRef, CanvasTabProps>(({
       >
         <button
           onClick={() => {
+            const event = new CustomEvent('open-canvas-workspace', {
+              detail: { tabId: tab.id },
+              bubbles: true,
+            });
+            document.dispatchEvent(event);
+          }}
+          style={{
+            padding: '4px 10px',
+            borderRadius: 6,
+            border: '1px solid #334155',
+            background: '#1e293b',
+            color: '#e2e8f0',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+          title="Open this canvas as a full workspace"
+        >
+          ⤢ Open as Workspace
+        </button>
+        <button
+          onClick={() => {
             if (editorRef.current) {
-              const text = editorRef.current.getText();
-              if (text.trim()) {
-                // Extract all content to main canvas
+              // Prefer provenance-preserving extraction per composed block
+              const json = editorRef.current.getContent();
+              const extractions: { text: string; provenance: ProvenanceData }[] = [];
+              let plainText = '';
+
+              const extractText = (node: any): string => {
+                if (!node) return '';
+                if (typeof node.text === 'string') return node.text;
+                const children = Array.isArray(node.content) ? node.content : [];
+                return children.map(extractText).join('');
+              };
+
+              const walk = (node: any) => {
+                if (!node) return;
+                if (node.type === 'composedContent' && node.attrs?.provenance) {
+                  const text = extractText(node);
+                  if (text.trim()) {
+                    extractions.push({ text, provenance: node.attrs.provenance as ProvenanceData });
+                  }
+                } else {
+                  // Accumulate plain text from non-composed nodes
+                  plainText += extractText(node);
+                }
+
+                const children = Array.isArray(node.content) ? node.content : [];
+                for (const child of children) walk(child);
+              };
+
+              walk(json);
+
+              // Dispatch composed blocks first to preserve model provenance
+              for (const item of extractions) {
+                onExtractToMain?.(item.text, item.provenance);
+              }
+
+              // Then include any free-typed canvas text (as canvas provenance)
+              if (plainText.trim()) {
                 const provenance: ProvenanceData = {
                   sessionId: 'canvas',
                   aiTurnId: tab.id,
@@ -96,9 +151,9 @@ export const CanvasTab = forwardRef<CanvasScratchpadRef, CanvasTabProps>(({
                   responseIndex: 0,
                   timestamp: Date.now(),
                   granularity: 'full',
-                  sourceText: text,
+                  sourceText: plainText,
                 };
-                onExtractToMain?.(text, provenance);
+                onExtractToMain?.(plainText, provenance);
               }
             }
           }}

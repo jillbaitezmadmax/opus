@@ -222,6 +222,9 @@ const AiTurnBlock: React.FC<AiTurnBlockProps> = ({
                   isLoading={isLoading}
                   currentAppStep={currentAppStep as AppStep}
                   isReducedMotion={isReducedMotion}
+                  aiTurnId={aiTurn.id}
+                  sessionId={aiTurn.sessionId ?? undefined}
+                  onEnterComposerMode={() => onEnterComposerMode?.(aiTurn)}
                 />
               </div>
             )}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { PinnedBar } from './PinnedBar';
 import { ResponseViewer } from './ResponseViewer';
 import { GhostData } from '../../types/dragDrop';
@@ -19,6 +19,7 @@ interface ReferenceZoneProps {
   onToggleCollapse: () => void;
   onSelectResponse?: (providerId: string) => void;
   onExtractToCanvas?: (text: string, provenance: ProvenanceData) => void;
+  flashTick?: number;
 }
 
 export const ReferenceZone: React.FC<ReferenceZoneProps> = ({
@@ -33,7 +34,16 @@ export const ReferenceZone: React.FC<ReferenceZoneProps> = ({
   onToggleCollapse,
   onSelectResponse,
   onExtractToCanvas,
+  flashTick,
 }) => {
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (typeof flashTick === 'number') {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 700);
+      return () => clearTimeout(t);
+    }
+  }, [flashTick]);
   if (isCollapsed) {
     return (
       <div
@@ -101,6 +111,8 @@ export const ReferenceZone: React.FC<ReferenceZoneProps> = ({
         background: '#0f172a',
         borderRight: '1px solid #334155',
         overflow: 'hidden',
+        boxShadow: flash ? '0 0 0 2px #8b5cf6, 0 0 14px rgba(139,92,246,0.45) inset' : undefined,
+        transition: 'box-shadow 200ms ease',
       }}
     >
       {/* Header with collapse toggle */}

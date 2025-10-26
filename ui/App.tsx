@@ -259,7 +259,16 @@ const [stepMetadata, setStepMetadata] = useState<Map<string, {
         lastScrollTopRef.current = st;
       }, 200) as any;
     };
-    return <div {...props} ref={ref} onScroll={onScroll} />;
+    return (
+      <div
+        {...props}
+        ref={ref}
+        onScroll={(e: any) => {
+          try { props?.onScroll?.(e); } catch {}
+          onScroll(e);
+        }}
+      />
+    );
   });
 
   // Persistence effects for mapping and power user mode settings
@@ -452,7 +461,7 @@ useEffect(() => {
   useEffect(() => {
     const handleBeforeUnload = () => {
       try {
-        const pos = (virtuosoRef.current as any)?.getState?.()?.scrollTop ?? lastScrollTopRef.current ?? 0;
+        const pos = lastScrollTopRef.current ?? 0;
         if (currentSessionId) {
           saveScrollPositionLS(currentSessionId, pos);
         }
@@ -1401,8 +1410,6 @@ useEffect(() => {
     load();
     return () => {};
   }, [isHistoryPanelOpen]);
-
-  // Legacy scroll persistence effect removed; handled by startup shutdown effect above.
 
 
 

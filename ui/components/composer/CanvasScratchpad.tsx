@@ -1,8 +1,9 @@
-import React, { useImperativeHandle, forwardRef } from 'react';
+import React, { useImperativeHandle, forwardRef, useRef, useEffect } from 'react';
 import { useEditor, EditorContent, JSONContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { ComposedContent, ProvenanceData } from './extensions/ComposedContentNode';
+import { ProvenanceExtension } from './extensions/ProvenanceExtension';
 
 interface CanvasScratchpadProps {
   initialContent?: JSONContent;
@@ -25,6 +26,8 @@ export const CanvasScratchpad = forwardRef<CanvasScratchpadRef, CanvasScratchpad
   onChange,
   className = '',
 }, ref) => {
+  const skipInitialUpdateRef = useRef(true);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -33,9 +36,12 @@ export const CanvasScratchpad = forwardRef<CanvasScratchpadRef, CanvasScratchpad
         emptyEditorClass: 'is-editor-empty',
       }),
       ComposedContent,
+      ProvenanceExtension,
     ],
     content: initialContent || '',
     onUpdate: ({ editor }) => {
+      // Avoid triggering parent state updates during initial mount/render
+      if (skipInitialUpdateRef.current) return;
       onChange?.(editor.getJSON());
     },
     editorProps: {
@@ -45,6 +51,18 @@ export const CanvasScratchpad = forwardRef<CanvasScratchpadRef, CanvasScratchpad
       },
     },
   });
+
+  // After the editor is initialized, allow onUpdate to propagate changes
+  useEffect(() => {
+    if (editor) {
+      // Set content when prop changes (e.g., switching canvas tabs)
+      if (initialContent) {
+        editor.commands.setContent(initialContent as any);
+      }
+      // Unblock updates after initial mount
+      skipInitialUpdateRef.current = false;
+    }
+  }, [editor, initialContent]);
 
   useImperativeHandle(ref, () => ({
     insertComposedContent: (content: string, provenance: ProvenanceData, position?: number) => {

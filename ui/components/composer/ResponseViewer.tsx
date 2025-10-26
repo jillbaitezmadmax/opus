@@ -138,6 +138,19 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
               cursor: 'pointer'
             }}
           >Sentence</button>
+          <button
+            onClick={() => onExtractToCanvas?.(text, provenance)}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: '1px solid #334155',
+              background: '#1d4ed8',
+              color: '#ffffff',
+              fontSize: 12,
+              cursor: 'pointer'
+            }}
+            title="Send full response to Canvas"
+          >Send to Canvas</button>
         </div>
       </div>
 
