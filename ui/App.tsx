@@ -1898,7 +1898,7 @@ await api.ensurePort({ sessionId });
   };
 
   return (
-    <div className="sidecar-app-container" style={{ display: 'flex', height: '100vh', overflow: 'hidden', gap: '0px', padding: '0' }}>
+    <div className="sidecar-app-container" style={{ display: 'flex', height: '100vh', overflow: 'hidden', overflowX: 'hidden', gap: '0px', padding: '0', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
       {alertText && (
         <Banner text={alertText} onClose={() => setAlertText(null)} />
       )}
@@ -1909,7 +1909,12 @@ await api.ensurePort({ sessionId });
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
-          padding: '0'
+          padding: '0',
+          width: '100%',
+          minWidth: 0,
+          maxWidth: '100%',
+          boxSizing: 'border-box',
+          overflowX: 'hidden'
         }}
       >
         <header
@@ -1986,7 +1991,7 @@ await api.ensurePort({ sessionId });
           </div>
         </header>
 
-        <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0' }}>
+        <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0', minWidth: 0 }}>
           {viewMode === ViewMode.CHAT ? (
             <div style={{ flex: 1, overflow: 'hidden', padding: '0' }}>
               {showWelcome && (

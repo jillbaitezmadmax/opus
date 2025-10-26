@@ -159,6 +159,19 @@ export const SaveDialog: React.FC<SaveDialogProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
+              transition: 'all 0.15s ease',
+              transform: 'scale(1)',
+            }}
+            onMouseDown={(e) => {
+              if (title.trim() && !isSaving) {
+                e.currentTarget.style.transform = 'scale(0.95)';
+              }
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
             }}
           >
             {isSaving && (

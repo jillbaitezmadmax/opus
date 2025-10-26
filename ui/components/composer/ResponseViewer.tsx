@@ -3,12 +3,15 @@ import type { ChatTurn, ResponseBlock } from '../../types/chat';
 import { DraggableSegment } from './DraggableSegment';
 import { Granularity, segmentText } from '../../utils/segmentText';
 import { ProvenanceData } from './extensions/ComposedContentNode';
+import { getProviderById } from '../../providers/providerRegistry';
 
 interface ResponseViewerProps {
   turn: ChatTurn | null;
   response?: ResponseBlock | undefined;
   granularity: Granularity; // 'paragraph' | 'sentence'
   onGranularityChange: (g: Granularity) => void;
+  onPinSegment?: (text: string, provenance: ProvenanceData) => void;
+  onExtractToCanvas?: (text: string, provenance: ProvenanceData) => void;
 }
 
 export const ResponseViewer: React.FC<ResponseViewerProps> = ({
@@ -16,24 +19,39 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
   response,
   granularity,
   onGranularityChange,
+  onPinSegment,
+  onExtractToCanvas,
 }) => {
-  const selectedBelongs = useMemo(() => {
-    if (!turn || turn.type === 'user' || !response?.providerId) return false;
-    return (turn.responses || []).some(r => r.providerId === response.providerId);
+  // Determine effective response to display
+  const effectiveResponse = useMemo<ResponseBlock | undefined>(() => {
+    if (!turn) return undefined;
+    if (turn.type === 'user') return undefined;
+    if (response && (turn.responses || []).some(r => r.id === response.id)) return response;
+    return turn.responses?.[0];
   }, [turn, response]);
 
   const text = useMemo(() => {
     if (!turn) return '';
     if (turn.type === 'user') return turn.content || '';
-    if (response && selectedBelongs) return response.content || '';
-    return turn.responses?.[0]?.content || turn.content || '';
-  }, [turn, response, selectedBelongs]);
+    return effectiveResponse?.content || '';
+  }, [turn, effectiveResponse]);
 
-  const providerId = useMemo(() => {
+  const providerIdFull = useMemo(() => {
     if (!turn || turn.type === 'user') return 'user';
-    if (response && selectedBelongs) return response.providerId || 'unknown';
-    return turn.providerId || 'unknown';
-  }, [turn, response, selectedBelongs]);
+    return effectiveResponse?.providerId || turn.providerId || 'unknown';
+  }, [turn, effectiveResponse]);
+
+  const baseProviderId = useMemo(() => providerIdFull.replace(/-(synthesis|mapping)$/,'') , [providerIdFull]);
+  const responseType: ProvenanceData['responseType'] = useMemo(() => {
+    if (/-synthesis$/.test(providerIdFull)) return 'synthesis';
+    if (/-mapping$/.test(providerIdFull)) return 'mapping';
+    return 'batch';
+  }, [providerIdFull]);
+  const responseIndex = useMemo(() => {
+    if (!turn || turn.type === 'user') return 0;
+    const idx = (turn.responses || []).findIndex(r => r.id === effectiveResponse?.id);
+    return idx >= 0 ? idx : 0;
+  }, [turn, effectiveResponse]);
 
   // Map UI granularity to provenance granularity union
   const provGranularity: ProvenanceData['granularity'] = useMemo(() => {
@@ -46,14 +64,14 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
   const provenance: ProvenanceData = useMemo(() => ({
     sessionId: turn?.sessionId || 'current',
     aiTurnId: turn?.id || 'unknown',
-    providerId: providerId,
-    responseType: 'batch',
-    responseIndex: 0,
+    providerId: providerIdFull,
+    responseType,
+    responseIndex,
     timestamp: Date.now(),
     granularity: provGranularity,
     sourceText: text,
     sourceContext: { fullResponse: text }
-  }), [turn, providerId, provGranularity, text]);
+  }), [turn, providerIdFull, responseType, responseIndex, provGranularity, text]);
 
   const segments = useMemo(() => segmentText(text, granularity), [text, granularity]);
 
@@ -68,8 +86,32 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
         borderBottom: '1px solid #334155',
         background: '#0f172a',
       }}>
-        <div style={{ color: '#cbd5e1', fontSize: 12 }}>
-          {turn?.type === 'ai' ? 'AI Response' : 'User Message'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ color: '#cbd5e1', fontSize: 12 }}>
+            {turn?.type === 'ai' ? 'AI Response' : 'User Message'}
+          </div>
+          {turn && turn.type === 'ai' && (
+            (() => {
+              const provider = getProviderById(baseProviderId);
+              const typeLabel = responseType === 'batch' ? 'Batch' : responseType === 'synthesis' ? 'Synthesis' : 'Mapping';
+              return (
+                <div style={{
+                  fontSize: 12,
+                  color: '#94a3b8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  border: '1px solid #334155',
+                  borderRadius: 6,
+                  padding: '2px 6px'
+                }} title={`${provider?.name || baseProviderId} • ${typeLabel}`}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: provider?.color || '#8b5cf6' }} />
+                  <span>{provider?.name || baseProviderId}</span>
+                  <span style={{ opacity: 0.7 }}>• {typeLabel}</span>
+                </div>
+              );
+            })()
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button
@@ -115,11 +157,13 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
             key={seg.id}
             segment={seg}
             turnId={turn?.id || 'unknown'}
-            responseId={response?.id || `${turn?.id}-primary`}
-            providerId={providerId}
+            responseId={effectiveResponse?.id || `${turn?.id}-primary`}
+            providerId={providerIdFull}
             granularity={granularity}
             provenance={provenance}
             sourceContext={{ fullResponse: text }}
+            onPin={onPinSegment}
+            onExtractToCanvas={onExtractToCanvas}
           />
         ))}
       </div>

@@ -137,17 +137,49 @@ class EnhancedDocumentStore {
   }
 
   /**
+   * Delete a ghost by ID
+   */
+  async deleteGhost(ghostId: string): Promise<void> {
+    const persistence = await getPersistenceLayer();
+    try {
+      if (typeof (persistence as any).deleteGhost === 'function') {
+        await (persistence as any).deleteGhost(ghostId);
+      }
+    } catch (error) {
+      console.error('[EnhancedDocumentStore] Failed to delete ghost:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update ghost metadata
+   */
+  async updateGhost(ghostId: string, updates: Partial<any>): Promise<void> {
+    const persistence = await getPersistenceLayer();
+    try {
+      if (typeof (persistence as any).updateGhost === 'function') {
+        await (persistence as any).updateGhost(ghostId, updates);
+      }
+    } catch (error) {
+      console.error('[EnhancedDocumentStore] Failed to update ghost:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Enable auto-save for a document
    */
   enableAutoSave(documentId: string, getDocument: () => DocumentRecord): void {
-    throw new Error('Ghost creation via persistence layer not yet implemented');
+    // Auto-save implementation deferred - using dirty save in ComposerMode
+    console.warn('[EnhancedDocumentStore] enableAutoSave not yet implemented');
   }
 
   /**
    * Disable auto-save for a document
    */
   disableAutoSave(documentId: string): void {
-    throw new Error('Ghost deletion via persistence layer not yet implemented');
+    // Auto-save implementation deferred - using dirty save in ComposerMode
+    console.warn('[EnhancedDocumentStore] disableAutoSave not yet implemented');
   }
 
   

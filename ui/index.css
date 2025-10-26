@@ -142,3 +142,28 @@ footer {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Layout clamps to prevent horizontal overflow in Chat/Composer */
+html, body, #root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.sidecar-app-container,
+.main-content-wrapper,
+.chat-area {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.composer-toolbar {
+  width: 100%;
+}
+
+/* Ensure long words/content wrap within the editor */
+.ProseMirror {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

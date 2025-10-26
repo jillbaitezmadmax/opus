@@ -7,6 +7,8 @@ interface DocumentsHistoryPanelProps {
   onSelectDocument: (document: DocumentRecord) => void;
   onDeleteDocument: (documentId: string) => void;
   onNewDocument: () => void;
+  // When this number increments, the panel will refresh its list if open
+  refreshSignal?: number;
 }
 
 interface DocumentSummary {
@@ -22,19 +24,20 @@ const DocumentsHistoryPanel: React.FC<DocumentsHistoryPanelProps> = ({
   isOpen,
   onSelectDocument,
   onDeleteDocument,
-  onNewDocument
+  onNewDocument,
+  refreshSignal = 0,
 }) => {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const documentStore = new EnhancedDocumentStore();
+  // Use singleton instance instead of creating new instance
 
   useEffect(() => {
     if (isOpen) {
       loadDocuments();
     }
-  }, [isOpen]);
+  }, [isOpen, refreshSignal]);
 
   const loadDocuments = async () => {
     setIsLoading(true);
@@ -44,14 +47,14 @@ const DocumentsHistoryPanel: React.FC<DocumentsHistoryPanelProps> = ({
       setDocuments(documentSummaries.map(doc => ({
         id: doc.id,
         title: doc.title,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
-        type: doc.type,
-        isAutosave: doc.isAutosave
+        createdAt: doc.lastModified || Date.now(),
+        updatedAt: doc.lastModified || Date.now(),
+        type: 'document',
+        isAutosave: false
       })));
     } catch (err) {
       console.error('Failed to load documents:', err);
-      setError('Failed to load documents');
+      setError(`Failed to load documents: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
@@ -62,10 +65,12 @@ const DocumentsHistoryPanel: React.FC<DocumentsHistoryPanelProps> = ({
       const fullDocument = await enhancedDocumentStore.loadDocument(documentSummary.id);
       if (fullDocument) {
         onSelectDocument(fullDocument);
+      } else {
+        setError('Document not found');
       }
     } catch (err) {
       console.error('Failed to load document:', err);
-      setError('Failed to load document');
+      setError(`Failed to load document: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 

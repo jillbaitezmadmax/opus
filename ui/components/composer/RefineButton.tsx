@@ -58,7 +58,6 @@ const RefineButton: React.FC<RefineButtonProps> = ({
             alignItems: 'center',
             gap: '6px',
             opacity: disabled || isRefining ? 0.6 : 1,
-            borderRight: 'none',
           }}
           aria-label="Refine text with AI"
         >
@@ -82,7 +81,9 @@ const RefineButton: React.FC<RefineButtonProps> = ({
             display: 'flex',
             alignItems: 'center',
             opacity: disabled || isRefining ? 0.6 : 1,
-            borderLeft: '1px solid rgba(255, 255, 255, 0.2)',
+            // Avoid mixing shorthand borderColor with side-specific borderLeft to prevent React warnings
+            // Collapse the adjacent borders instead
+            marginLeft: '-1px',
           }}
           aria-label="Select model for refinement"
         >

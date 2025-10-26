@@ -4,7 +4,7 @@ interface ComposerToolbarProps {
   onExit?: () => void;
   onSave?: () => void;
   onExport?: () => void;
-  onRefine?: (selectedModel: string, content: string) => void;
+  onRefine?: (content: string, selectedModel: string) => void;
   onToggleDocuments?: () => void;
   isDirty?: boolean;
   isSaving?: boolean;
@@ -40,12 +40,14 @@ const ComposerToolbar = ({
         background: '#1e293b',
         borderBottom: '1px solid #334155',
         gap: '16px',
-        flexWrap: 'wrap',  // ADD THIS
-  minHeight: '60px',  // ADD THIS
+        flexWrap: 'wrap',
+        rowGap: '8px',
+        minHeight: '60px',
+        width: '100%',
       }}
     >
       {/* Left section - Exit and title */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flexShrink: 1 }}>
         <button
           onClick={onExit}
           style={{
@@ -92,14 +94,19 @@ const ComposerToolbar = ({
         display: 'flex', 
         alignItems: 'center', 
         gap: '12px',
-        flex: 1,
+        flex: '1 1 200px',
+        minWidth: 0,
         justifyContent: 'center'
       }}>
         <h2 style={{ 
           margin: 0, 
           fontSize: '16px', 
           fontWeight: 600, 
-          color: '#e2e8f0' 
+          color: '#e2e8f0',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: '100%'
         }}>
           Composer Mode
         </h2>
@@ -119,7 +126,7 @@ const ComposerToolbar = ({
       </div>
       
       {/* Right section - Action buttons */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 1, minWidth: 0, flexWrap: 'wrap', marginLeft: 'auto', justifyContent: 'flex-end' }}>
         <button
           onClick={onToggleDocuments}
           style={{
@@ -143,10 +150,10 @@ const ComposerToolbar = ({
         </button>
         
         <RefineButton
-          onRefine={(selectedModel, content) => {
-            // Get content from editor and pass to refine handler
-            const editorContent = editorRef.current?.getContent?.() || '';
-            onRefine?.(selectedModel, editorContent);
+          onRefine={(selectedModel, _content) => {
+            // Get plain text from editor and pass to refine handler
+            const editorText = editorRef.current?.getText?.() || '';
+            onRefine?.(editorText, selectedModel);
           }}
           isRefining={isRefining}
           disabled={!editorRef.current}
@@ -154,7 +161,7 @@ const ComposerToolbar = ({
         
         <button
           onClick={onSave}
-          disabled={!isDirty || isSaving}
+          disabled={isSaving}
           style={{
             background: isDirty && !isSaving ? '#10b981' : '#334155',
             border: '1px solid',
@@ -164,11 +171,11 @@ const ComposerToolbar = ({
             color: isDirty && !isSaving ? '#fff' : '#64748b',
             fontSize: '14px',
             fontWeight: 500,
-            cursor: isDirty && !isSaving ? 'pointer' : 'not-allowed',
+            cursor: isSaving ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            opacity: isDirty && !isSaving ? 1 : 0.6,
+            opacity: isSaving ? 0.6 : 1,
           }}
           aria-label="Save composition"
         >

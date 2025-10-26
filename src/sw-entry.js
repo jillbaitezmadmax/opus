@@ -620,11 +620,52 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
       case 'SAVE_DOCUMENT': {
         const layer = self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
         if (HTOS_ENABLE_DOCUMENT_PERSISTENCE && layer && layer.documentManager) {
-          await layer.documentManager.saveDocument(
-            message.documentId,
-            message.document,
-            message.content
-          );
+          try {
+            await layer.documentManager.saveDocument(
+              message.documentId,
+              message.document,
+              message.content
+            );
+          } catch (e) {
+            // If document doesn't exist yet, create it (upsert) and retry save
+            const msg = (e && e.message) ? e.message : String(e);
+            if (msg && msg.toLowerCase().includes('not found')) {
+              try {
+                const now = Date.now();
+                const baseDoc = {
+                  id: message.documentId,
+                  title: (message.document && message.document.title) || 'Untitled Document',
+                  sourceSessionId: message.document?.sourceSessionId,
+                  canvasContent: Array.isArray(message.content) ? message.content : (message.document?.canvasContent || []),
+                  granularity: message.document?.granularity || 'paragraph',
+                  isDirty: false,
+                  createdAt: message.document?.createdAt || now,
+                  updatedAt: now,
+                  lastModified: now,
+                  version: message.document?.version || 1,
+                  blockCount: Array.isArray(message.content) ? message.content.length : (message.document?.blockCount || 0),
+                  refinementHistory: message.document?.refinementHistory || [],
+                  exportHistory: message.document?.exportHistory || [],
+                  snapshots: message.document?.snapshots || [],
+                };
+                await layer.adapter.put('documents', baseDoc);
+                // Retry save to let the manager decompose and update derived fields
+                await layer.documentManager.saveDocument(
+                  message.documentId,
+                  message.document,
+                  message.content
+                );
+              } catch (inner) {
+                console.error('[SW] SAVE_DOCUMENT upsert failed:', inner);
+                sendResponse({ success: false, error: inner?.message || String(inner) });
+                return true;
+              }
+            } else {
+              console.error('[SW] SAVE_DOCUMENT failed:', e);
+              sendResponse({ success: false, error: msg });
+              return true;
+            }
+          }
           sendResponse({ success: true });
         } else {
           const reason = !HTOS_ENABLE_DOCUMENT_PERSISTENCE

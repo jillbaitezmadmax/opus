@@ -15,6 +15,7 @@ interface CanvasEditorProps {
 
 export interface CanvasEditorRef {
   insertComposedContent: (content: string, provenance: ProvenanceData, position?: number) => void;
+  setContent: (content: JSONContent) => void;
   getContent: () => JSONContent;
   getText: () => string;
   clear: () => void;
@@ -71,6 +72,10 @@ export const CanvasEditorV2 = forwardRef<CanvasEditorRef, CanvasEditorProps>(({
         position,
       });
     },
+    setContent: (content: JSONContent) => {
+      if (!editor) return;
+      editor.commands.setContent(content);
+    },
     getContent: () => editor?.getJSON() || { type: 'doc', content: [] },
     getText: () => editor?.getText() || '',
     clear: () => editor?.commands.clearContent(),
@@ -84,16 +89,18 @@ export const CanvasEditorV2 = forwardRef<CanvasEditorRef, CanvasEditorProps>(({
   }, [editor, initialContent]);
 
   return (
-    <div 
+    <div
       ref={setNodeRef}
-      className={`canvas-editor-container ${isOver ? 'drop-target-active' : ''}`}
       style={{
-        minHeight: '400px',
-        border: '2px dashed #e5e7eb',
+        height: '100%',
+        width: '100%',
+        border: isOver ? '2px dashed #8b5cf6' : '1px solid #334155',
         borderRadius: '8px',
-        transition: 'all 0.2s ease',
-        backgroundColor: isOver ? '#f3f4f6' : 'transparent',
-        borderColor: isOver ? '#8b5cf6' : '#e5e7eb',
+        background: isOver ? 'rgba(139, 92, 246, 0.05)' : '#0f172a',
+        padding: '16px',
+        overflow: 'auto',
+        position: 'relative',
+        boxSizing: 'border-box',
       }}
     >
       <EditorContent editor={editor} />
@@ -114,6 +121,8 @@ export const CanvasEditorV2 = forwardRef<CanvasEditorRef, CanvasEditorProps>(({
         
         .canvas-editor-container .ProseMirror {
           outline: none;
+          white-space: pre-wrap;
+          word-wrap: break-word;
         }
         
         .canvas-editor-container .is-editor-empty::before {

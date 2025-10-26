@@ -16,6 +16,8 @@ interface DraggableSegmentProps {
     afterText?: string;
     fullResponse?: string;
   };
+  onPin?: (text: string, provenance: ProvenanceData) => void;
+  onExtractToCanvas?: (text: string, provenance: ProvenanceData) => void;
 }
 
 export const DraggableSegment: React.FC<DraggableSegmentProps> = ({
@@ -25,10 +27,14 @@ export const DraggableSegment: React.FC<DraggableSegmentProps> = ({
   providerId,
   granularity,
   provenance,
-  sourceContext
+  sourceContext,
+  onPin,
+  onExtractToCanvas
 }) => {
   const [showCopyButton, setShowCopyButton] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [extracted, setExtracted] = useState(false);
 
   const dragData: DragData = createContentBlockDragData(
     segment.text,
@@ -54,6 +60,24 @@ export const DraggableSegment: React.FC<DraggableSegmentProps> = ({
       setTimeout(() => setCopied(false), 1500);
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+  };
+
+  const handlePin = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onPin) {
+      onPin(segment.text, provenance);
+      setPinned(true);
+      setTimeout(() => setPinned(false), 1500);
+    }
+  };
+
+  const handleExtractToCanvas = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onExtractToCanvas) {
+      onExtractToCanvas(segment.text, provenance);
+      setExtracted(true);
+      setTimeout(() => setExtracted(false), 1500);
     }
   };
 
@@ -117,25 +141,59 @@ export const DraggableSegment: React.FC<DraggableSegmentProps> = ({
     >
       {segment.text}
       {showCopyButton && granularity !== 'word' && (
-        <button
-          onClick={handleCopy}
-          style={{
-            position: 'absolute',
-            right: '4px',
-            top: '4px',
-            background: copied ? '#10a37f' : '#8b5cf6',
-            border: 'none',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '10px',
-            color: 'white',
-            cursor: 'pointer',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-            zIndex: 10
-          }}
-        >
-          {copied ? '✓' : '📋'}
-        </button>
+        <div style={{ position: 'absolute', right: '4px', top: '4px', display: 'flex', gap: '4px', zIndex: 10 }}>
+          {onExtractToCanvas && (
+            <button
+              onClick={handleExtractToCanvas}
+              style={{
+                background: extracted ? '#10a37f' : '#3b82f6',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 6px',
+                fontSize: '10px',
+                color: 'white',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+              title="Extract to canvas"
+            >
+              {extracted ? '✓' : '↓'}
+            </button>
+          )}
+          {onPin && (
+            <button
+              onClick={handlePin}
+              style={{
+                background: pinned ? '#f59e0b' : '#8b5cf6',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 6px',
+                fontSize: '10px',
+                color: 'white',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+              title="Pin this segment"
+            >
+              {pinned ? '✓' : '📌'}
+            </button>
+          )}
+          <button
+            onClick={handleCopy}
+            style={{
+              background: copied ? '#10a37f' : '#8b5cf6',
+              border: 'none',
+              borderRadius: '4px',
+              padding: '2px 6px',
+              fontSize: '10px',
+              color: 'white',
+              cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+            }}
+          >
+            {copied ? '✓' : '📋'}
+          </button>
+        </div>
       )}
     </span>
   );
