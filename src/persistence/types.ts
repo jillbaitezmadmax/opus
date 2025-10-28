@@ -147,6 +147,9 @@ export interface DocumentRecord {
   sourceSessionId?: string;        // Primary session this doc was created from
   sessionId?: string;              // Added to fix DocumentsRepository error
   canvasContent: any[];            // Full Slate.js JSON structure
+  // Tabs state for the canvas editor
+  canvasTabs?: any[];
+  activeTabId?: string;
   granularity: 'full' | 'paragraph' | 'sentence';
   isDirty: boolean;
   createdAt: number;

@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { CanvasTabData } from './CanvasTab';
+import React, { useCallback } from 'react';
+import { CanvasTabData } from '../../types';
 
 interface CanvasTrayProps {
   tabs: CanvasTabData[];
@@ -14,8 +14,6 @@ export const CanvasTray: React.FC<CanvasTrayProps> = ({
   onActivateTab,
   onTabsChange,
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
-
   const handleAddTab = useCallback(() => {
     const now = Date.now();
     const newTab: CanvasTabData = {
@@ -35,25 +33,14 @@ export const CanvasTray: React.FC<CanvasTrayProps> = ({
     onTabsChange?.(updated);
   }, [tabs, onTabsChange]);
 
-  if (isCollapsed) {
-    return (
-      <div style={{ height: '32px', background: '#0f172a', borderTop: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 12px', gap: 8 }}>
-        <button
-          onClick={() => setIsCollapsed(false)}
-          style={{ width: 28, height: 28, borderRadius: '50%', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}
-          title="Expand"
-        >
-          ▲
-        </button>
-        <span style={{ color: '#94a3b8', fontSize: 12 }}>Canvas Tabs: {tabs.length}</span>
-      </div>
-    );
-  }
-
   return (
     <div style={{ height: '48px', background: '#0f172a', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', background: '#0b1220', overflowX: 'auto' }}>
-        {tabs.map((tab, idx) => {
+      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', background: '#0b1220' }}>
+        {/* left flexible spacer to prevent overlap and keep center group centered */}
+        <div style={{ flex: 1, minWidth: 24 }} />
+        {/* center group: canvas icons and add button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           return (
             <button
@@ -71,12 +58,12 @@ export const CanvasTray: React.FC<CanvasTrayProps> = ({
                 color: isActive ? '#0b1220' : '#e2e8f0',
                 border: '1px solid #475569',
                 cursor: 'pointer',
-                fontSize: 12,
+                fontSize: 16,
                 fontWeight: 700,
                 boxShadow: isActive ? '0 0 0 2px rgba(139,92,246,0.35)' : 'none',
               }}
             >
-              {idx + 1}
+              📝
             </button>
           );
         })}
@@ -87,14 +74,9 @@ export const CanvasTray: React.FC<CanvasTrayProps> = ({
         >
           +
         </button>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={() => setIsCollapsed(true)}
-          style={{ width: 28, height: 28, borderRadius: '50%', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}
-          title="Collapse"
-        >
-          ▼
-        </button>
+        </div>
+        {/* right flexible spacer to keep layout non-overlapping */}
+        <div style={{ flex: 1, minWidth: 24 }} />
       </div>
     </div>
   );

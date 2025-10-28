@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from '@tiptap/core';
+import { Node as PMNode, mergeAttributes } from '@tiptap/core';
 import type { CommandProps } from '@tiptap/core';
 
 export interface ProvenanceData {
@@ -16,7 +16,7 @@ export interface ProvenanceData {
   };
 }
 
-export const ComposedContent = Node.create({
+export const ComposedContent = PMNode.create({
   name: 'composedContent',
   group: 'block',
   content: 'inline*',

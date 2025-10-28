@@ -111,7 +111,7 @@ export class ConnectionHandler {
       // Auto-relocate sessionId if needed (after reconnects or UI drift)
       await this._relocateSessionId(executeRequest);
 
-      // NEW: Ensure session memory is hydrated for continuation/historical requests
+      // Ensure session memory is hydrated for continuation/historical requests
       try {
         const isContinuation = executeRequest?.mode === 'continuation';
         const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
@@ -128,6 +128,16 @@ export class ConnectionHandler {
         console.warn('[ConnectionHandler] Session hydration skipped:', e?.message || String(e));
       }
 
+      // Step 1: Normalize per-provider modes (allows new providers to start fresh)
+      this._normalizeProviderModesForContinuation(executeRequest);
+
+      // Step 2: Validate that providers explicitly marked for continuation have context
+      const precheck = this._precheckContinuation(executeRequest);
+      if (precheck && precheck.missingProviders && precheck.missingProviders.length > 0) {
+        this._emitContinuationPrecheckFailure(executeRequest, precheck.missingProviders);
+        return;
+      }
+
       // Compile high-level request to detailed workflow
       const workflowRequest = this.services.compiler.compile(executeRequest);
 
@@ -138,6 +148,126 @@ export class ConnectionHandler {
       // Deactivate lifecycle manager after workflow
       this.lifecycleManager?.deactivateWorkflowMode();
     }
+  }
+
+  /**
+   * Normalize provider modes for continuation requests:
+   * - Providers WITH context → default to 'continuation' (unless explicitly overridden)
+   * - Providers WITHOUT context → default to 'new-conversation' (unless explicitly overridden)
+   * 
+   * This allows new providers to join existing chats without triggering errors.
+   */
+  _normalizeProviderModesForContinuation(executeRequest) {
+    try {
+      const mode = executeRequest?.mode;
+      const sessionId = executeRequest?.sessionId;
+      const providers = Array.isArray(executeRequest?.providers) ? executeRequest.providers : [];
+      if (mode !== 'continuation' || !sessionId || providers.length === 0) return;
+
+      const contexts = this.services.sessionManager?.getProviderContexts(sessionId, 'default-thread') || {};
+      const providerModes = { ...(executeRequest?.providerModes || {}) };
+
+      for (const pid of providers) {
+        // Respect explicit UI overrides
+        if (providerModes[pid]) continue;
+        
+        // Auto-assign mode based on context presence
+        const hasCtx = !!(contexts?.[pid]?.meta && Object.keys(contexts[pid].meta).length > 0);
+        providerModes[pid] = hasCtx ? 'continuation' : 'new-conversation';
+      }
+
+      executeRequest.providerModes = providerModes;
+    } catch (_) {
+      // Best-effort; compiler will handle defaults
+    }
+  }
+
+  /**
+   * Fast-fail validation: check if providers explicitly marked for continuation
+   * actually have the required context.
+   * 
+   * This catches reconnection bugs where context was lost but shouldn't have been.
+   * It does NOT fail for new providers joining an existing chat.
+   */
+  _precheckContinuation(executeRequest) {
+    try {
+      const mode = executeRequest?.mode;
+      const sessionId = executeRequest?.sessionId;
+      const providers = Array.isArray(executeRequest?.providers) ? executeRequest.providers : [];
+      const providerModes = executeRequest?.providerModes || {};
+      
+      if (mode !== 'continuation' || !sessionId || providers.length === 0) return null;
+
+      const contexts = this.services.sessionManager?.getProviderContexts(sessionId, 'default-thread') || {};
+      const missing = [];
+
+      for (const pid of providers) {
+        const providerMode = providerModes[pid];
+        
+        // Only validate providers that SHOULD have context
+        // (i.e., explicitly marked as 'continuation')
+        if (providerMode !== 'continuation') continue;
+        
+        const ctxMeta = contexts?.[pid]?.meta;
+        if (!ctxMeta || (typeof ctxMeta === 'object' && Object.keys(ctxMeta).length === 0)) {
+          missing.push(pid);
+        }
+      }
+
+      return { missingProviders: missing };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Emit a clean failure message when continuation precheck fails
+   */
+  _emitContinuationPrecheckFailure(executeRequest, missingProviders) {
+    const sid = executeRequest?.sessionId || 'unknown';
+    const providers = Array.isArray(executeRequest?.providers) ? executeRequest.providers : [];
+    const now = Date.now();
+    const stepId = `batch-precheck-${now}`;
+
+    const results = {};
+    for (const pid of providers) {
+      if (missingProviders.includes(pid)) {
+        results[pid] = {
+          providerId: pid,
+          text: '',
+          status: 'failed',
+          errorCode: 'missing-provider-context',
+          meta: { 
+            _rawError: `Cannot continue: missing context for ${pid}. The conversation may have been lost due to a restart. Please start a new chat.` 
+          }
+        };
+      } else {
+        // Mark other selected providers as skipped to complete the round cleanly
+        results[pid] = {
+          providerId: pid,
+          text: '',
+          status: 'failed',
+          errorCode: 'precheck-skipped',
+          meta: { 
+            _rawError: 'Request cancelled due to missing context for one or more providers.' 
+          }
+        };
+      }
+    }
+
+    try {
+      this.port.postMessage({
+        type: 'WORKFLOW_STEP_UPDATE',
+        sessionId: sid,
+        stepId,
+        status: 'completed',
+        result: { results }
+      });
+    } catch (_) {}
+
+    try {
+      this.port.postMessage({ type: 'WORKFLOW_COMPLETE', sessionId: sid });
+    } catch (_) {}
   }
 
   /**

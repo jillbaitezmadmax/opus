@@ -30,6 +30,17 @@ import type {
   AiTurnRecord,
   ProviderResponseRecord
 } from '../src/persistence/types';
+// UI typing for canvas tabs
+import type { JSONContent } from '@tiptap/react';
+
+// UI typing for canvas tabs
+export interface CanvasTabData {
+  id: string;
+  title: string;
+  content: JSONContent;
+  createdAt: number;
+  updatedAt: number;
+}
 
 // =============================================================================
 // RE-EXPORTED TYPES FROM SHARED CONTRACT
@@ -191,8 +202,10 @@ export interface Provenance {
 }
 
 // Unified DocumentRecord that extends persistence schema but uses Slate types
-export interface DocumentRecord extends Omit<SchemaDocumentRecord, 'canvasContent'> {
+export interface DocumentRecord extends Omit<SchemaDocumentRecord, 'canvasContent' | 'canvasTabs'> {
   canvasContent: SlateDescendant[];
+  canvasTabs?: CanvasTabData[];
+  activeTabId?: string;
   // Add temporary storage flag for enhanced document store
   _tempStorage?: boolean;
 }

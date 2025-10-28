@@ -4,7 +4,6 @@ import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSenso
  import { CanvasEditorRef } from './CanvasEditorV2';
  import { TurnMessage, AiTurn } from '../../types';
  import ComposerToolbar from './ComposerToolbar';
- // HorizontalChatRail removed in Phase 2 - replaced by NavigatorBar
  import { NavigatorBar } from './NavigatorBar';
  import { convertTurnMessagesToChatTurns, ChatTurn, ResponseBlock } from '../../types/chat';
  import { DragData, isValidDragData, GhostData } from '../../types/dragDrop';
@@ -18,7 +17,7 @@ import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSenso
  import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
  import { PERSISTENCE_FEATURE_FLAGS } from '../../../src/persistence/index';
 import { CanvasTray } from './CanvasTray';
-import { CanvasTabData } from './CanvasTab';
+import { CanvasTabData } from '../../types';
 import { JSONContent } from '@tiptap/react';
 
 interface ComposerModeProps {
@@ -207,6 +206,8 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           ...currentDocument,
           title: currentDocument.title || generateDefaultTitle(content),
           canvasContent: nodes as any,
+          canvasTabs,
+          activeTabId: activeCanvasId,
           lastModified: now,
           updatedAt: now,
           // blockCount: optional; service worker may recompute
@@ -220,7 +221,9 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
         const newDoc = await enhancedDocumentStore.createDocument(
           title,
           sessionId || undefined,
-          nodes as any
+          nodes as any,
+          canvasTabs,
+          activeCanvasId
         );
         setCurrentDocument(newDoc);
         setLastSavedContent(content);
@@ -281,6 +284,8 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           ...currentDocument,
           title: title || currentDocument.title,
           canvasContent: nodes as any,
+          canvasTabs,
+          activeTabId: activeCanvasId,
           lastModified: now,
           updatedAt: now,
         } as DocumentRecord;
@@ -290,7 +295,9 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
         const newDoc = await enhancedDocumentStore.createDocument(
           title || generateDefaultTitle(content),
           sessionId || undefined,
-          nodes as any
+          nodes as any,
+          canvasTabs,
+          activeCanvasId
         );
         setCurrentDocument(newDoc);
       }
@@ -474,18 +481,29 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
 
   // Handle document selection from history panel
   const handleSelectDocument = useCallback((document: DocumentRecord) => {
-    if (editorRef.current && document.canvasContent) {
-      // Parse and normalize to TipTap doc JSON
-      const raw = typeof document.canvasContent === 'string' 
-        ? JSON.parse(document.canvasContent) 
-        : document.canvasContent;
-      const docJson = Array.isArray(raw) ? { type: 'doc', content: raw } : raw;
-      // Ensure editor is ready and set content via exposed ref API
+    if (!editorRef.current) return;
+    const raw = document.canvasContent as any;
+    const normalized = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const docJson = Array.isArray(normalized) ? { type: 'doc', content: normalized } : normalized;
+
+    // If the document has tabs, load them and set active tab
+    const tabs = Array.isArray(document.canvasTabs) ? (document.canvasTabs as CanvasTabData[]) : null;
+    if (tabs && tabs.length > 0) {
+      setCanvasTabs(tabs);
+      const nextActiveId = document.activeTabId || tabs[0].id;
+      setActiveCanvasId(nextActiveId);
+      const activeTab = tabs.find(t => t.id === nextActiveId);
+      const activeContent = activeTab?.content || docJson;
+      editorRef.current.setContent?.(activeContent as any);
+      setLastSavedContent(JSON.stringify(activeContent));
+    } else {
+      // No tabs stored; use main document content and update first tab locally
       editorRef.current.setContent?.(docJson as any);
-      setCurrentDocument(document);
+      setCanvasTabs(prev => prev.map((t, i) => i === 0 ? { ...t, content: docJson, updatedAt: Date.now() } : t));
       setLastSavedContent(JSON.stringify(docJson));
-      setShowDocumentsPanel(false);
     }
+    setCurrentDocument(document);
+    setShowDocumentsPanel(false);
   }, []);
 
   // Handle new document creation
@@ -630,8 +648,21 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
     if (!tabs.some(t => t.id === activeCanvasId)) {
       setActiveCanvasId(tabs[0]?.id || '');
     }
-    // TODO: Persist canvas tabs to document record
-  }, [activeCanvasId]);
+    // Persist canvas tabs to document record (metadata only)
+    if (currentDocument) {
+      const now = Date.now();
+      const updatedDoc: DocumentRecord = {
+        ...currentDocument,
+        canvasTabs: tabs as any,
+        activeTabId: tabs.some(t => t.id === activeCanvasId) ? activeCanvasId : (tabs[0]?.id || ''),
+        lastModified: now,
+        updatedAt: now,
+      } as DocumentRecord;
+      enhancedDocumentStore.saveDocument(updatedDoc)
+        .then(() => setCurrentDocument(updatedDoc))
+        .catch(err => console.warn('[ComposerMode] Failed to persist canvas tabs:', err));
+    }
+  }, [activeCanvasId, currentDocument]);
 
   // Handle extract to canvas from ResponseViewer
   const handleExtractToCanvas = useCallback((text: string, provenance: ProvenanceData) => {
@@ -849,6 +880,8 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
                       width: canvasWidth,
                       transition: 'width 250ms ease'
                     }}
+                    onMouseEnter={handleCanvasFocus}
+                    onMouseLeave={handleCanvasBlur}
                     onClick={handleCanvasFocus}
                     onFocus={handleCanvasFocus}
                     onBlur={handleCanvasBlur}

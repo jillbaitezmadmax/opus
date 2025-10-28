@@ -3,7 +3,7 @@ import type { ChatTurn, ResponseBlock } from '../../types/chat';
 import { DraggableSegment } from './DraggableSegment';
 import { Granularity, segmentText } from '../../utils/segmentText';
 import { ProvenanceData } from './extensions/ComposedContentNode';
-import { getProviderById } from '../../providers/providerRegistry';
+// Removed provider header badge; no longer need provider registry here
 
 interface ResponseViewerProps {
   turn: ChatTurn | null;
@@ -41,7 +41,6 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
     return effectiveResponse?.providerId || turn.providerId || 'unknown';
   }, [turn, effectiveResponse]);
 
-  const baseProviderId = useMemo(() => providerIdFull.replace(/-(synthesis|mapping)$/,'') , [providerIdFull]);
   const responseType: ProvenanceData['responseType'] = useMemo(() => {
     if (/-synthesis$/.test(providerIdFull)) return 'synthesis';
     if (/-mapping$/.test(providerIdFull)) return 'mapping';
@@ -76,59 +75,7 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {/* Controls (sentence toggle removed; compact header) */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 12px',
-        borderBottom: '1px solid #334155',
-        background: '#0f172a',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ color: '#cbd5e1', fontSize: 11 }}>
-            {turn?.type === 'ai' ? 'AI Response' : 'User Message'}
-          </div>
-          {turn && turn.type === 'ai' && (
-            (() => {
-              const provider = getProviderById(baseProviderId);
-              const typeLabel = responseType === 'batch' ? 'Batch' : responseType === 'synthesis' ? 'Synthesis' : 'Mapping';
-              return (
-                <div style={{
-                  fontSize: 10,
-                  color: '#94a3b8',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  border: '1px solid #334155',
-                  borderRadius: 4,
-                  padding: '1px 4px'
-                }} title={`${provider?.name || baseProviderId} • ${typeLabel}`}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: provider?.color || '#8b5cf6' }} />
-                  <span>{provider?.name || baseProviderId}</span>
-                  <span style={{ opacity: 0.7 }}>• {typeLabel}</span>
-                </div>
-              );
-            })()
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => onGranularityChange('paragraph')}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 6,
-              border: '1px solid #334155',
-              background: '#1e293b',
-              color: '#e2e8f0',
-              fontSize: 12,
-              cursor: 'default'
-            }}
-          >Paragraph</button>
-        </div>
-      </div>
-
-      {/* Content area: outer wrapper handles visible overflow for arrows; inner scrolls */}
+      {/* Content area only (header removed as redundant; single granularity) */}
       <div style={{
         position: 'relative',
         overflow: 'visible',

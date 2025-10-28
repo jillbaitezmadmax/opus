@@ -211,6 +211,19 @@ export class DocumentManager {
       await this.adapter.delete('ghosts', ghost.id);
     }
 
+    // Cascade delete: remove metadata associated with this document
+    try {
+      const allMetadata = await this.adapter.getAll('metadata') as any[];
+      const docMetadata = allMetadata.filter((m) => m && m.entityId === documentId);
+      for (const meta of docMetadata) {
+        if (meta?.id) {
+          await this.adapter.delete('metadata', meta.id);
+        }
+      }
+    } catch (err) {
+      console.warn('[DocumentManager] Failed to cascade delete metadata for document', documentId, err);
+    }
+
     // Delete the document itself
     await this.adapter.delete('documents', documentId);
   }

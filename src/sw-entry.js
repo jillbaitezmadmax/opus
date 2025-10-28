@@ -637,6 +637,9 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
                   title: (message.document && message.document.title) || 'Untitled Document',
                   sourceSessionId: message.document?.sourceSessionId,
                   canvasContent: Array.isArray(message.content) ? message.content : (message.document?.canvasContent || []),
+                  // Persist canvas tabs state when upserting a new document
+                  canvasTabs: Array.isArray(message.document?.canvasTabs) ? message.document.canvasTabs : [],
+                  activeTabId: message.document?.activeTabId || (Array.isArray(message.document?.canvasTabs) ? message.document.canvasTabs[0]?.id : undefined),
                   granularity: message.document?.granularity || 'paragraph',
                   isDirty: false,
                   createdAt: message.document?.createdAt || now,

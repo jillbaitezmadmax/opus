@@ -81,13 +81,17 @@ class EnhancedDocumentStore {
   async createDocument(
     title: string,
     sourceSessionId?: string,
-    initialContent?: any[]
+    initialContent?: any[],
+    initialTabs?: any[],
+    activeTabId?: string
   ): Promise<DocumentRecord> {
     const doc: DocumentRecord = {
       id: this.generateId(),
       title,
       sourceSessionId,
       canvasContent: initialContent || [{ type: 'paragraph', children: [{ text: '' }] }],
+      canvasTabs: initialTabs,
+      activeTabId,
       granularity: 'paragraph',
       isDirty: false,
       createdAt: Date.now(),

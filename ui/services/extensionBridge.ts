@@ -21,6 +21,9 @@ export interface DocumentData {
   id: string;
   title: string;
   canvasContent: any[];
+  // Tabs state persisted with the document
+  canvasTabs?: any[];
+  activeTabId?: string;
   sourceSessionId?: string;
   lastModified: number;
   version: number;
