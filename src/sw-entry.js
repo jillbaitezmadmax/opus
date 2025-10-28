@@ -106,11 +106,23 @@ async function initializePersistence() {
 // SESSION MANAGER INITIALIZATION
 // ============================================================================
 async function initializeSessionManager(persistenceLayer) {
-  if (sessionManager) return sessionManager;
+  // ✅ ALWAYS reinitialize if adapter is not ready (indicates stale instance)
+  if (sessionManager && sessionManager.adapter?.isReady()) {
+    console.log('[SW] Reusing existing SessionManager instance');
+    return sessionManager;
+  }
+  
+  // If we have a stale instance, clear it
+  if (sessionManager) {
+    console.warn('[SW] Clearing stale SessionManager instance');
+    sessionManager = null;
+  }
   
   try {
     console.log('[SW:INIT:5] Initializing session manager...');
     sessionManager = new SessionManager();
+    
+    // ✅ CRITICAL: Ensure sessions reference is fresh
     sessionManager.sessions = __HTOS_SESSIONS;
     
     // Always initialize with persistence adapter

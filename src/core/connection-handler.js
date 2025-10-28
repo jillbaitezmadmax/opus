@@ -13,6 +13,7 @@ import { WorkflowEngine } from "./workflow-engine.js";
  * 2. Async initialization: Don't attach listeners until backend is ready
  * 3. Proper cleanup: Remove listeners and free resources on disconnect
  * 4. No global state pollution: Everything is encapsulated
+ * 5. AGGRESSIVE SESSION HYDRATION: Always re-hydrate from persistence for continuation requests
  */
 
 export class ConnectionHandler {
@@ -111,22 +112,8 @@ export class ConnectionHandler {
       // Auto-relocate sessionId if needed (after reconnects or UI drift)
       await this._relocateSessionId(executeRequest);
 
-      // Ensure session memory is hydrated for continuation/historical requests
-      try {
-        const isContinuation = executeRequest?.mode === 'continuation';
-        const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
-        const sid = executeRequest?.sessionId;
-        if ((isContinuation || isHistorical) && sid) {
-          const sm = this.services.sessionManager;
-          if (sm && (!sm.sessions || !sm.sessions[sid])) {
-            await sm.getOrCreateSession(sid);
-            console.log(`[ConnectionHandler] Hydrated session memory for ${sid}`);
-          }
-        }
-      } catch (e) {
-        // Non-fatal hydration failure; engine/compile will proceed with fallbacks
-        console.warn('[ConnectionHandler] Session hydration skipped:', e?.message || String(e));
-      }
+      // CRITICAL: Aggressive session hydration for continuation/historical requests
+      await this._ensureSessionHydration(executeRequest);
 
       // Step 1: Normalize per-provider modes (allows new providers to start fresh)
       this._normalizeProviderModesForContinuation(executeRequest);
@@ -147,6 +134,86 @@ export class ConnectionHandler {
     } finally {
       // Deactivate lifecycle manager after workflow
       this.lifecycleManager?.deactivateWorkflowMode();
+    }
+  }
+
+  /**
+   * CRITICAL: Ensure session is fully hydrated from persistence
+   * This solves the SW restart context loss bug
+   */
+  async _ensureSessionHydration(executeRequest) {
+    const isContinuation = executeRequest?.mode === 'continuation';
+    const isHistorical = !!executeRequest?.historicalContext?.userTurnId;
+    const sid = executeRequest?.sessionId;
+
+    // Only hydrate for continuation or historical requests with a valid sessionId
+    if ((!isContinuation && !isHistorical) || !sid) {
+      return;
+    }
+
+    const sm = this.services.sessionManager;
+    
+    // Validate SessionManager is ready
+    if (!sm) {
+      throw new Error('[ConnectionHandler] SessionManager not available');
+    }
+
+    if (!sm.isInitialized) {
+      console.warn('[ConnectionHandler] SessionManager not initialized, waiting...');
+      // Give it 2 seconds to initialize
+      const timeout = 2000;
+      const startTime = Date.now();
+      while (!sm.isInitialized && (Date.now() - startTime) < timeout) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!sm.isInitialized) {
+        throw new Error('[ConnectionHandler] SessionManager initialization timeout');
+      }
+    }
+
+    if (!sm.adapter?.isReady()) {
+      throw new Error('[ConnectionHandler] Persistence adapter not ready');
+    }
+
+    console.log(`[ConnectionHandler] Force-hydrating session ${sid} for ${isContinuation ? 'continuation' : 'historical'} request`);
+
+    try {
+      // ALWAYS re-hydrate from persistence for continuation/historical requests
+      // Don't trust in-memory state after SW restart
+      const hydratedSession = await sm.getOrCreateSession(sid);
+      
+      if (!hydratedSession) {
+        throw new Error(`[ConnectionHandler] Failed to hydrate session ${sid}`);
+      }
+
+      // Validate that the session has expected structure
+      if (!hydratedSession.sessionId || hydratedSession.sessionId !== sid) {
+        throw new Error(`[ConnectionHandler] Hydrated session has mismatched ID: ${hydratedSession.sessionId} vs ${sid}`);
+      }
+
+      // For continuation requests, verify that provider contexts were loaded
+      if (isContinuation) {
+        const contexts = sm.getProviderContexts(sid, 'default-thread') || {};
+        const contextCount = Object.keys(contexts).length;
+        
+        console.log(`[ConnectionHandler] Session ${sid} hydrated with ${contextCount} provider contexts`);
+        
+        // Log each provider's context for debugging
+        Object.entries(contexts).forEach(([providerId, ctx]) => {
+          const metaKeys = ctx?.meta ? Object.keys(ctx.meta) : [];
+          console.log(`[ConnectionHandler] Provider ${providerId} context: ${metaKeys.join(', ') || '(empty)'}`);
+        });
+
+        // Note: We don't fail here if contexts are empty because:
+        // 1. It might be a legitimate new provider being added
+        // 2. The precheck will catch missing contexts for providers that should have them
+      }
+
+      console.log(`[ConnectionHandler] ✅ Session ${sid} successfully hydrated`);
+
+    } catch (error) {
+      console.error(`[ConnectionHandler] Session hydration failed for ${sid}:`, error);
+      throw new Error(`Failed to hydrate session ${sid}: ${error.message}`);
     }
   }
 

@@ -66,6 +66,17 @@ Output Requirements:
 - Aim for higher quality than any individual response by resolving the conflicts the map identified
 - Do not analyze or compare the source outputs in your response
 
+Additional Task - Options Inventory:
+After your main synthesis, add a section with EXACTLY this delimiter:
+"===ALL AVAILABLE OPTIONS==="
+ Then add "Options" and 
+- List ALL distinct approaches/solutions found across all models
+- Groups similar ideas together under theme headers
+- Summarizes each in 1-2 sentences max
+- Deduplicates semantically identical suggestions
+- Orders from most to least mentioned/supported
+Format as a clean, scannable list for quick reference
+
 <model_outputs>
 ${otherResults}
 </model_outputs>
@@ -95,6 +106,7 @@ Critical instruction: Do NOT synthesize into a single answer. Instead, reason in
 **Surface the invisible** — Highlight consensus from 2+ models, unique sightings from one model as natural flow.
 **Frame the choices** — present alternatives as "If you prioritize X, this path fits because Y."
 **Flag the unknowns** — Note disagreements or uncertainties as subtle cautions.
+**Anticipate the journey** — End with a subtle suggestion: "This naturally leads to questions about..." or "The next consideration might be..." based on the tensions and gaps identified.
 
 **Internal format for reasoning - NEVER output directly:**
 - What Everyone Sees, consensus
