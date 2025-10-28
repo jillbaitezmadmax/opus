@@ -1127,6 +1127,39 @@ useEffect(() => {
         }
       });
     }
+
+    // Send visibility messages to SW to keep it alive while UI is visible
+    let uiId = `tab:${Math.floor(Math.random() * 1e9).toString(36)}`;
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+        // Prefer tab id when available
+        chrome.tabs.getCurrent((tab) => {
+          if (tab?.id) {
+            uiId = `tab:${tab.id}:${Math.floor(Math.random() * 1e9).toString(36)}`;
+          }
+          try { chrome.runtime.sendMessage({ type: 'ui.visible', uiId }); } catch (_) {}
+        });
+      }
+    } catch (_) {}
+
+    const onVisibility = () => {
+      try {
+        if (document.visibilityState === 'visible') {
+          chrome.runtime.sendMessage({ type: 'ui.visible', uiId });
+        } else {
+          chrome.runtime.sendMessage({ type: 'ui.hidden', uiId });
+        }
+      } catch (_) {}
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', () => { try { chrome.runtime.sendMessage({ type: 'ui.hidden', uiId }); } catch (_) {} });
+
+    return () => {
+      try { chrome.runtime.sendMessage({ type: 'ui.hidden', uiId }); } catch (_) {}
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', () => {});
+    };
   }, []);
 
   const getStepType = (stepId: string): 'batch' | 'synthesis' | 'mapping' | null => {
@@ -1718,6 +1751,7 @@ useEffect(() => {
         } as UserTurn);
         const providerResponses: Record<string, ProviderResponse> = {} as any;
         Object.entries(r?.providers || {}).forEach(([pid, data]: any) => {
+         
           providerResponses[String(pid)] = {
             providerId: String(pid),
             text: String((data && data.text) || ''),

@@ -9,7 +9,7 @@ export class PortHealthManager {
   private readonly HEALTH_CHECK_INTERVAL = 30000; // 30s
   private readonly RECONNECT_DELAY = 2000; // base delay
   private readonly RECONNECT_JITTER_MS = 500; // random jitter
-  private readonly MAX_RECONNECT_ATTEMPTS = 3;
+  // No hard cap on reconnect attempts - UI will retry indefinitely until SW responds
   
   private reconnectAttempts = 0;
   private isConnected = false;
@@ -122,11 +122,7 @@ export class PortHealthManager {
   }
 
   private attemptReconnect() {
-    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-      console.error('[PortHealthManager] Max reconnect attempts reached');
-      return;
-    }
-    
+    // Increment attempt counter (used for exponential backoff), but do not give up
     this.reconnectAttempts++;
     const jitter = Math.floor(Math.random() * this.RECONNECT_JITTER_MS);
     const base = this.RECONNECT_DELAY + jitter;

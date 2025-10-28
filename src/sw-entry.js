@@ -66,6 +66,11 @@ self.BusController = BusController;
 // PERSISTENCE LAYER INITIALIZATION
 // ============================================================================
 async function initializePersistence() {
+  if (self.__HTOS_PERSISTENCE_INITIALIZED) {
+    console.log('[SW] Persistence already initialized - reusing existing layer');
+    return self.__HTOS_PERSISTENCE_LAYER || persistenceLayer;
+  }
+
   const operationId = persistenceMonitor.startOperation('INITIALIZE_PERSISTENCE', {
     useAdapter: true,
     enableDocumentPersistence: HTOS_ENABLE_DOCUMENT_PERSISTENCE
@@ -80,6 +85,7 @@ async function initializePersistence() {
     });
     // Expose globally for UI bridge and debugging
     self.__HTOS_PERSISTENCE_LAYER = persistenceLayer;
+    self.__HTOS_PERSISTENCE_INITIALIZED = true;
     
     persistenceMonitor.recordConnection('HTOSPersistenceDB', 1, [
       'sessions', 'threads', 'turns', 'provider_responses', 
@@ -87,7 +93,6 @@ async function initializePersistence() {
     ]);
     
     console.log('[SW] ✅ Persistence layer initialized');
-    console.warn('persistence adapter initialized');
     persistenceMonitor.endOperation(operationId, { success: true });
     return persistenceLayer;
   } catch (error) {
@@ -126,15 +131,23 @@ async function initializeSessionManager(persistenceLayer) {
     sessionManager.sessions = __HTOS_SESSIONS;
     
     // Always initialize with persistence adapter
-    const { SimpleIndexedDBAdapter } = await import('./persistence/SimpleIndexedDBAdapter.js');
-    const simpleAdapter = new SimpleIndexedDBAdapter();
-    
-    console.log('[SW] Initializing SimpleIndexedDBAdapter for SessionManager...');
-    await simpleAdapter.init();
-    
-    await sessionManager.initialize({
-      adapter: simpleAdapter
-    });
+    // Prefer an already-initialized adapter from the persistenceLayer (or global) to
+    // avoid creating multiple adapters and duplicate initialization logs.
+    if (persistenceLayer && persistenceLayer.adapter && typeof persistenceLayer.adapter.isReady === 'function' && persistenceLayer.adapter.isReady()) {
+      console.log('[SW] Reusing persistence adapter from provided persistenceLayer for SessionManager');
+      await sessionManager.initialize({ adapter: persistenceLayer.adapter });
+    } else if (self.__HTOS_PERSISTENCE_LAYER && self.__HTOS_PERSISTENCE_LAYER.adapter && typeof self.__HTOS_PERSISTENCE_LAYER.adapter.isReady === 'function' && self.__HTOS_PERSISTENCE_LAYER.adapter.isReady()) {
+      console.log('[SW] Reusing global persistence adapter for SessionManager');
+      await sessionManager.initialize({ adapter: self.__HTOS_PERSISTENCE_LAYER.adapter });
+    } else {
+      const { SimpleIndexedDBAdapter } = await import('./persistence/SimpleIndexedDBAdapter.js');
+      const simpleAdapter = new SimpleIndexedDBAdapter();
+      console.log('[SW] Initializing SimpleIndexedDBAdapter for SessionManager...');
+      await simpleAdapter.init();
+      await sessionManager.initialize({
+        adapter: simpleAdapter
+      });
+    }
     
     console.log('[SW:INIT:6] ✅ Session manager initialized with persistence');
     
@@ -367,7 +380,17 @@ async function initializeProviders() {
 // ============================================================================
 async function initializeOrchestrator() {
   try {
-    self.lifecycleManager = new LifecycleManager();
+    // Provide a lightweight ping that attempts a runtime keepalive message
+    const ping = async () => {
+      try {
+        // best-effort keepalive to any UI or offscreen context
+        await chrome.runtime.sendMessage({ type: 'htos.keepalive', timestamp: Date.now() });
+      } catch (_) {
+        // ignore - runtime.sendMessage may fail if no listeners
+      }
+    };
+
+    self.lifecycleManager = new LifecycleManager(ping);
     self.faultTolerantOrchestrator = new FaultTolerantOrchestrator();
     console.log("[SW] ✓ FaultTolerantOrchestrator initialized");
   } catch (e) {
@@ -785,10 +808,48 @@ async function handleUnifiedMessage(message, sender, sendResponse) {
 // MESSAGE LISTENER REGISTRATION
 // ============================================================================
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Ignore bus messages
+  // Priority 1: UI Visibility Tracking (synchronous, immediate)
+  if (request?.type === 'ui.visible') {
+    try {
+      const uiId = request.uiId || `${sender?.tab?.id || 'tab'}:${Date.now()}`;
+      if (self.lifecycleManager) self.lifecycleManager.registerUIConnection(uiId);
+      sendResponse({ success: true });
+    } catch (e) {
+      sendResponse({ success: false, error: e?.message || String(e) });
+    }
+    return false;
+  }
+
+  if (request?.type === 'ui.hidden') {
+    try {
+      const uiId = request.uiId || `${sender?.tab?.id || 'tab'}`;
+      if (self.lifecycleManager) self.lifecycleManager.unregisterUIConnection(uiId);
+      sendResponse({ success: true });
+    } catch (e) {
+      sendResponse({ success: false, error: e?.message || String(e) });
+    }
+    return false;
+  }
+
+  // Priority 2: Keepalive messages (immediate response, no async init)
+  if (request?.type === 'htos.offscreen.ping') {
+    sendResponse({ type: 'htos.sw.pong', timestamp: Date.now(), originalTimestamp: request.timestamp });
+    return false;
+  }
+
+  if (request?.type === 'htos.offscreen.pong') {
+    return false;
+  }
+
+  if (request?.type === 'htos.keepalive') {
+    sendResponse({ success: true, timestamp: Date.now() });
+    return false;
+  }
+
+  // Priority 3: Bus messages (ignore, handled by BusController)
   if (request?.$bus) return false;
 
-  // Immediate health status response (no async init await)
+  // Priority 4: Health status (synchronous)
   if (request?.type === 'GET_HEALTH_STATUS') {
     try {
       const status = getHealthStatus();
@@ -796,15 +857,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } catch (e) {
       sendResponse({ success: false, error: e?.message || String(e) });
     }
-    return true; // Explicitly keep channel open for async-style patterns
+    return true;
   }
 
-  // Handle all other messages through unified handler
+  // Priority 5: All other messages through unified handler
   if (request?.type) {
     handleUnifiedMessage(request, sender, sendResponse);
-    return true; // Always return true to keep channel open for async responses
+    return true; // keep channel open for async responses
   }
-  
+
   return false;
 });
 
@@ -928,14 +989,21 @@ globalThis.__HTOS_SW = {
 // ============================================================================
 (async () => {
   try {
-    const INIT_TIMEOUT_MS = 30000; // 30s timeout for global initialization
+    const INIT_TIMEOUT_MS = 30000;
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('[SW:INIT] Initialization timed out after 30s')), INIT_TIMEOUT_MS);
     });
     const services = await Promise.race([initializeGlobalServices(), timeoutPromise]);
     SWBootstrap.init(services);
     console.log("[SW] 🚀 Bootstrap complete. System ready.");
-    
+
+    // --- NEW: Start centralized lifecycle heartbeat (uses LifecycleManager.ensureOffscreenDocument)
+    if (self.lifecycleManager) {
+      // Start heartbeat with UI_VISIBLE_INTERVAL when UI visible and IDLE_INTERVAL otherwise
+      self.lifecycleManager.startHeartbeat(self.lifecycleManager.IDLE_INTERVAL || undefined);
+      console.log('[SW] Lifecycle manager heartbeat started');
+    }
+
     // Log health status
     const health = await getHealthStatus();
     console.log("[SW] Health Status:", health);

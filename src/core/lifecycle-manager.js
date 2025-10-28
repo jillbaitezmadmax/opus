@@ -19,7 +19,9 @@ export class LifecycleManager {
     
     // Track workflow depth for nested operations
     this.workflowDepth = 0;
-    
+    // Track UI visibility state to keep SW alive while any UI is visible
+    this.uiConnections = new Set();
+     
     // Offscreen document health
     this.offscreenHealthTimer = null;
     this.OFFSCREEN_CHECK_INTERVAL = 60 * 1000; // Check every minute
@@ -36,6 +38,40 @@ export class LifecycleManager {
           this.deactivateWorkflowMode();
         }
       });
+    }
+  }
+
+  /**
+   * Register a UI as visible (prevents idle suspend)
+   */
+  registerUIConnection(uiId) {
+    try {
+      this.uiConnections.add(uiId);
+      console.log(`[Lifecycle] UI registered: ${uiId} (count=${this.uiConnections.size})`);
+      // Switch to active mode and ensure heartbeat runs
+      this.setActiveMode(true);
+      this.keepalive(true);
+      // Immediate ping to avoid hitting idle timeout
+      this.executePing().catch(e => console.warn('[Lifecycle] Immediate ping failed:', e));
+    } catch (e) {
+      console.warn('[Lifecycle] registerUIConnection error:', e);
+    }
+  }
+
+  /**
+   * Unregister a UI (hidden/disconnected)
+   */
+  unregisterUIConnection(uiId) {
+    try {
+      this.uiConnections.delete(uiId);
+      console.log(`[Lifecycle] UI unregistered: ${uiId} (count=${this.uiConnections.size})`);
+      // Only go idle if no UIs visible and no active workflows
+      if (this.uiConnections.size === 0 && this.workflowDepth === 0) {
+        this.setActiveMode(false);
+        this.keepalive(false);
+      }
+    } catch (e) {
+      console.warn('[Lifecycle] unregisterUIConnection error:', e);
     }
   }
 
@@ -81,17 +117,26 @@ export class LifecycleManager {
     if (this.isActive !== active) {
       this.isActive = active;
       const newInterval = active ? this.ACTIVE_INTERVAL : this.IDLE_INTERVAL;
-      console.log(`[Lifecycle] Mode: ${active ? 'ACTIVE' : 'IDLE'} (${newInterval}ms)`);
+      console.log(`[Lifecycle] Mode: ${active ? 'ACTIVE' : 'IDLE'} (${newInterval}ms, UIs=${this.uiConnections.size}, workflows=${this.workflowDepth})`);
       
-      // Restart heartbeat with new interval
+      // Update heartbeat interval state
+      this.heartbeatIntervalMs = newInterval;
+
+      // If heartbeat is already running, restart with new interval
       if (this.heartbeatTimer) {
         this.stopHeartbeat();
+        this.startHeartbeat(newInterval);
+        return;
+      }
+
+      // If keepAlive is set (e.g., UI visible or workflow active) ensure heartbeat runs
+      if (this.keepAlive) {
         this.startHeartbeat(newInterval);
       }
     }
   }
 
-  /**
+   /**
    * Start heartbeat with optional custom interval
    */
   startHeartbeat(intervalMs) {
@@ -252,8 +297,8 @@ export class LifecycleManager {
         this.startHeartbeat();
       }
     } else {
-      // Only stop if no workflows active
-      if (this.workflowDepth === 0) {
+      // Only stop if no workflows active AND no UIs visible
+      if (this.workflowDepth === 0 && this.uiConnections.size === 0) {
         this.stopHeartbeat();
       }
     }
