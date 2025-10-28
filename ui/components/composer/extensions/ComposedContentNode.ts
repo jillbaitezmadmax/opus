@@ -90,13 +90,14 @@ export const ComposedContent = Node.create({
         class: 'composed-block',
         style: `
           border-left: 3px solid ${borderColor};
-          padding-left: 12px;
-          margin: 8px 0;
+          padding: 16px 16px 16px 20px;
+          margin: 20px 0;
           background: rgba(${borderColor.slice(1).match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '107, 114, 128'}, 0.05);
-          border-radius: 4px;
+          border-radius: 6px;
           position: relative;
           cursor: text;
           transition: all 0.2s ease;
+          line-height: 1.6;
         `,
         'data-composer-block': 'true',
         'data-turn-id': provenance?.aiTurnId || '',
@@ -175,14 +176,15 @@ export const ComposedContent = Node.create({
       
       dom.style.cssText = `
         border-left: 3px solid ${borderColor};
-        padding: 8px 12px 8px 12px;
-        margin: 8px 0;
+        padding: 16px 16px 16px 20px;
+        margin: 20px 0;
         background: rgba(${rgbColor}, 0.05);
-        border-radius: 4px;
+        border-radius: 6px;
         position: relative;
         cursor: text;
         user-select: text;
         transition: all 0.2s ease;
+        line-height: 1.6;
       `;
       
       // Provider badge overlay (include turn id)
@@ -201,10 +203,11 @@ export const ComposedContent = Node.create({
         font-size: 10px;
         font-weight: 600;
         color: ${borderColor};
-        pointer-events: auto;
         cursor: pointer;
         z-index: 100;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        opacity: 0;
+        pointer-events: none;
       `;
       badge.setAttribute('role', 'button');
       badge.setAttribute('aria-label', `Jump to ${baseProviderId} • Turn ${aiTurnIdStr || '—'}`);
@@ -320,9 +323,17 @@ export const ComposedContent = Node.create({
         }
       };
 
-      dom.addEventListener('mouseenter', (e) => showPreview(e));
+      dom.addEventListener('mouseenter', (e) => {
+        showPreview(e);
+        badge.style.opacity = '1';
+        badge.style.pointerEvents = 'auto';
+      });
       dom.addEventListener('mousemove', updatePreviewPosition);
-      dom.addEventListener('mouseleave', hidePreview);
+      dom.addEventListener('mouseleave', () => {
+        hidePreview();
+        badge.style.opacity = '0';
+        badge.style.pointerEvents = 'none';
+      });
 
       badge.addEventListener('mouseenter', () => {
         badge.style.transform = 'scale(1.05)';

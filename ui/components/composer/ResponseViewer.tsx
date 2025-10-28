@@ -8,8 +8,8 @@ import { getProviderById } from '../../providers/providerRegistry';
 interface ResponseViewerProps {
   turn: ChatTurn | null;
   response?: ResponseBlock | undefined;
-  granularity: Granularity; // 'paragraph' | 'sentence'
-  onGranularityChange: (g: Granularity) => void;
+  granularity: Granularity; // kept for compatibility but enforced to 'paragraph'
+  onGranularityChange: (g: Granularity) => void; // no-op in UI (sentence removed)
   onPinSegment?: (text: string, provenance: ProvenanceData) => void;
   onExtractToCanvas?: (text: string, provenance: ProvenanceData) => void;
 }
@@ -54,12 +54,10 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
   }, [turn, effectiveResponse]);
 
   // Map UI granularity to provenance granularity union
+  // Enforce paragraph granularity for provenance
   const provGranularity: ProvenanceData['granularity'] = useMemo(() => {
-    if (granularity === 'paragraph') return 'paragraph';
-    if (granularity === 'sentence') return 'sentence';
-    // Any other UI values (e.g., 'word') collapse to selection/full provenance
-    return 'selection';
-  }, [granularity]);
+    return 'paragraph';
+  }, []);
 
   const provenance: ProvenanceData = useMemo(() => ({
     sessionId: turn?.sessionId || 'current',
@@ -73,11 +71,12 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
     sourceContext: { fullResponse: text }
   }), [turn, providerIdFull, responseType, responseIndex, provGranularity, text]);
 
-  const segments = useMemo(() => segmentText(text, granularity), [text, granularity]);
+  // Always segment by paragraph
+  const segments = useMemo(() => segmentText(text, 'paragraph'), [text]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {/* Controls */}
+      {/* Controls (sentence toggle removed; compact header) */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -87,7 +86,7 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
         background: '#0f172a',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ color: '#cbd5e1', fontSize: 12 }}>
+          <div style={{ color: '#cbd5e1', fontSize: 11 }}>
             {turn?.type === 'ai' ? 'AI Response' : 'User Message'}
           </div>
           {turn && turn.type === 'ai' && (
@@ -96,16 +95,16 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
               const typeLabel = responseType === 'batch' ? 'Batch' : responseType === 'synthesis' ? 'Synthesis' : 'Mapping';
               return (
                 <div style={{
-                  fontSize: 12,
+                  fontSize: 10,
                   color: '#94a3b8',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: 4,
                   border: '1px solid #334155',
-                  borderRadius: 6,
-                  padding: '2px 6px'
+                  borderRadius: 4,
+                  padding: '1px 4px'
                 }} title={`${provider?.name || baseProviderId} • ${typeLabel}`}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: provider?.color || '#8b5cf6' }} />
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: provider?.color || '#8b5cf6' }} />
                   <span>{provider?.name || baseProviderId}</span>
                   <span style={{ opacity: 0.7 }}>• {typeLabel}</span>
                 </div>
@@ -120,65 +119,47 @@ export const ResponseViewer: React.FC<ResponseViewerProps> = ({
               padding: '6px 10px',
               borderRadius: 6,
               border: '1px solid #334155',
-              background: granularity === 'paragraph' ? '#1e293b' : '#0f172a',
+              background: '#1e293b',
               color: '#e2e8f0',
               fontSize: 12,
-              cursor: 'pointer'
+              cursor: 'default'
             }}
           >Paragraph</button>
-          <button
-            onClick={() => onGranularityChange('sentence')}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 6,
-              border: '1px solid #334155',
-              background: granularity === 'sentence' ? '#1e293b' : '#0f172a',
-              color: '#e2e8f0',
-              fontSize: 12,
-              cursor: 'pointer'
-            }}
-          >Sentence</button>
-          <button
-            onClick={() => onExtractToCanvas?.(text, provenance)}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 6,
-              border: '1px solid #334155',
-              background: '#1d4ed8',
-              color: '#ffffff',
-              fontSize: 12,
-              cursor: 'pointer'
-            }}
-            title="Send full response to Canvas"
-          >Send to Canvas</button>
         </div>
       </div>
 
-      {/* Content, rendered in-place with draggable segments */}
+      {/* Content area: outer wrapper handles visible overflow for arrows; inner scrolls */}
       <div style={{
+        position: 'relative',
+        overflow: 'visible',
         flex: 1,
-        overflow: 'auto',
-        padding: 16,
+        minHeight: 0,
         background: '#0b1220',
         borderRadius: 8
       }}>
-        {segments.length === 0 && (
-          <div style={{ color: '#94a3b8', fontSize: 13 }}>No content available.</div>
-        )}
-        {segments.map(seg => (
-          <DraggableSegment
-            key={seg.id}
-            segment={seg}
-            turnId={turn?.id || 'unknown'}
-            responseId={effectiveResponse?.id || `${turn?.id}-primary`}
-            providerId={providerIdFull}
-            granularity={granularity}
-            provenance={provenance}
-            sourceContext={{ fullResponse: text }}
-            onPin={onPinSegment}
-            onExtractToCanvas={onExtractToCanvas}
-          />
-        ))}
+        <div style={{
+          overflow: 'auto',
+          height: '100%',
+          padding: 16
+        }}>
+          {segments.length === 0 && (
+            <div style={{ color: '#94a3b8', fontSize: 13 }}>No content available.</div>
+          )}
+          {segments.map(seg => (
+            <DraggableSegment
+              key={seg.id}
+              segment={seg}
+              turnId={turn?.id || 'unknown'}
+              responseId={effectiveResponse?.id || `${turn?.id}-primary`}
+              providerId={providerIdFull}
+              granularity={'paragraph'}
+              provenance={provenance}
+              sourceContext={{ fullResponse: text }}
+              onPin={onPinSegment}
+              onExtractToCanvas={onExtractToCanvas}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

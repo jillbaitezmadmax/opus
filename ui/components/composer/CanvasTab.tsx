@@ -71,11 +71,12 @@ export const CanvasTab = forwardRef<CanvasScratchpadRef, CanvasTabProps>(({
         />
       </div>
 
-      {/* Optional: Quick Actions Bar */}
+      {/* Optional: Quick Actions Bar (centered bottom middle) */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'center',
           gap: 8,
           padding: '6px 12px',
           borderTop: '1px solid #334155',
@@ -189,7 +190,6 @@ export const CanvasTab = forwardRef<CanvasScratchpadRef, CanvasTabProps>(({
         >
           Clear
         </button>
-        <div style={{ flex: 1 }} />
         <div style={{ fontSize: 11, color: '#64748b' }}>
           {new Date(tab.updatedAt).toLocaleTimeString()}
         </div>

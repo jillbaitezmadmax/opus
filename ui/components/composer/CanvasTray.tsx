@@ -1,282 +1,103 @@
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { CanvasTab, CanvasTabData } from './CanvasTab';
-import { JSONContent } from '@tiptap/react';
-import { ProvenanceData } from './extensions/ComposedContentNode';
-import { CanvasScratchpadRef } from './CanvasScratchpad';
+import React, { useState, useCallback } from 'react';
+import { CanvasTabData } from './CanvasTab';
 
 interface CanvasTrayProps {
-  onExtractToMain?: (content: string, provenance: ProvenanceData) => void;
-  initialTabs?: CanvasTabData[];
+  tabs: CanvasTabData[];
+  activeTabId: string;
+  onActivateTab: (tabId: string) => void;
   onTabsChange?: (tabs: CanvasTabData[]) => void;
 }
 
 export const CanvasTray: React.FC<CanvasTrayProps> = ({
-  onExtractToMain,
-  initialTabs = [],
+  tabs,
+  activeTabId,
+  onActivateTab,
   onTabsChange,
 }) => {
-  const [tabs, setTabs] = useState<CanvasTabData[]>(
-    initialTabs.length > 0
-      ? initialTabs
-      : [
-          {
-            id: `canvas-${Date.now()}`,
-            title: 'Canvas 1',
-            content: { type: 'doc', content: [] },
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          },
-        ]
-  );
-  const [activeTabId, setActiveTabId] = useState<string>(tabs[0]?.id || '');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const activeCanvasRef = useRef<CanvasScratchpadRef | null>(null);
-
-  const activeTab = useMemo(() => tabs.find((t) => t.id === activeTabId), [tabs, activeTabId]);
-
-  // Listen for extract-to-canvas events
-  useEffect(() => {
-    const handleExtractToCanvas = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      const { text, provenance } = customEvent.detail || {};
-      
-      if (text && provenance && activeCanvasRef.current) {
-        activeCanvasRef.current.insertComposedContent(text, provenance);
-      }
-    };
-    
-    document.addEventListener('extract-to-canvas', handleExtractToCanvas);
-    return () => document.removeEventListener('extract-to-canvas', handleExtractToCanvas);
-  }, []);
-
-  const handleContentChange = useCallback(
-    (tabId: string, content: JSONContent) => {
-      setTabs((prev) => {
-        const updated = prev.map((tab) =>
-          tab.id === tabId
-            ? { ...tab, content, updatedAt: Date.now() }
-            : tab
-        );
-        onTabsChange?.(updated);
-        return updated;
-      });
-    },
-    [onTabsChange]
-  );
 
   const handleAddTab = useCallback(() => {
+    const now = Date.now();
     const newTab: CanvasTabData = {
-      id: `canvas-${Date.now()}`,
+      id: `canvas-${now}`,
       title: `Canvas ${tabs.length + 1}`,
       content: { type: 'doc', content: [] },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
-    setTabs((prev) => {
-      const updated = [...prev, newTab];
-      onTabsChange?.(updated);
-      return updated;
-    });
-    setActiveTabId(newTab.id);
-  }, [tabs.length, onTabsChange]);
+    const updated = [...tabs, newTab];
+    onTabsChange?.(updated);
+    onActivateTab(newTab.id);
+  }, [tabs, onTabsChange, onActivateTab]);
 
-  const handleRemoveTab = useCallback(
-    (tabId: string) => {
-      if (tabs.length === 1) return; // Keep at least one tab
-
-      setTabs((prev) => {
-        const filtered = prev.filter((t) => t.id !== tabId);
-        onTabsChange?.(filtered);
-        return filtered;
-      });
-
-      if (activeTabId === tabId) {
-        const currentIndex = tabs.findIndex((t) => t.id === tabId);
-        const nextTab = tabs[currentIndex + 1] || tabs[currentIndex - 1];
-        setActiveTabId(nextTab?.id || '');
-      }
-    },
-    [tabs, activeTabId, onTabsChange]
-  );
-
-  const handleRenameTab = useCallback(
-    (tabId: string, newTitle: string) => {
-      setTabs((prev) => {
-        const updated = prev.map((tab) =>
-          tab.id === tabId ? { ...tab, title: newTitle } : tab
-        );
-        onTabsChange?.(updated);
-        return updated;
-      });
-    },
-    [onTabsChange]
-  );
+  const handleRenameTab = useCallback((tabId: string, newTitle: string) => {
+    const updated = tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t));
+    onTabsChange?.(updated);
+  }, [tabs, onTabsChange]);
 
   if (isCollapsed) {
     return (
-      <div
-        style={{
-          height: '32px',
-          background: '#0f172a',
-          borderTop: '1px solid #334155',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 12px',
-          gap: 8,
-        }}
-      >
+      <div style={{ height: '32px', background: '#0f172a', borderTop: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 12px', gap: 8 }}>
         <button
           onClick={() => setIsCollapsed(false)}
-          style={{
-            background: 'none',
-            border: '1px solid #334155',
-            borderRadius: 6,
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: '4px 8px',
-            fontSize: 12,
-          }}
-          title="Expand Canvas Tray"
+          style={{ width: 28, height: 28, borderRadius: '50%', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}
+          title="Expand"
         >
-          ▲ Canvas Tray ({tabs.length})
+          ▲
         </button>
+        <span style={{ color: '#94a3b8', fontSize: 12 }}>Canvas Tabs: {tabs.length}</span>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        height: '240px',
-        background: '#0f172a',
-        borderTop: '1px solid #334155',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {/* Tab Bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '6px 8px',
-          borderBottom: '1px solid #334155',
-          background: '#0b1220',
-          overflowX: 'auto',
-        }}
-      >
-        {tabs.map((tab) => {
+    <div style={{ height: '48px', background: '#0f172a', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', background: '#0b1220', overflowX: 'auto' }}>
+        {tabs.map((tab, idx) => {
           const isActive = tab.id === activeTabId;
           return (
-            <div
+            <button
               key={tab.id}
+              onClick={() => onActivateTab(tab.id)}
+              title={tab.title}
               style={{
-                display: 'flex',
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: 6,
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid',
-                borderColor: isActive ? '#8b5cf6' : '#334155',
-                background: isActive ? 'rgba(139, 92, 246, 0.15)' : '#1e293b',
-                color: isActive ? '#e2e8f0' : '#94a3b8',
+                justifyContent: 'center',
+                background: isActive ? '#8b5cf6' : '#334155',
+                color: isActive ? '#0b1220' : '#e2e8f0',
+                border: '1px solid #475569',
                 cursor: 'pointer',
                 fontSize: 12,
-                fontWeight: 500,
-                minWidth: 100,
-                maxWidth: 150,
+                fontWeight: 700,
+                boxShadow: isActive ? '0 0 0 2px rgba(139,92,246,0.35)' : 'none',
               }}
-              onClick={() => setActiveTabId(tab.id)}
             >
-              <input
-                type="text"
-                value={tab.title}
-                onChange={(e) => handleRenameTab(tab.id, e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'inherit',
-                  fontSize: 'inherit',
-                  fontWeight: 'inherit',
-                  outline: 'none',
-                  width: '100%',
-                  padding: 0,
-                }}
-              />
-              {tabs.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveTab(tab.id);
-                  }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#94a3b8',
-                    cursor: 'pointer',
-                    padding: 0,
-                    fontSize: 14,
-                    lineHeight: 1,
-                  }}
-                  title="Close tab"
-                >
-                  ×
-                </button>
-              )}
-            </div>
+              {idx + 1}
+            </button>
           );
         })}
-
         <button
           onClick={handleAddTab}
-          style={{
-            background: 'none',
-            border: '1px solid #334155',
-            borderRadius: 6,
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: '6px 10px',
-            fontSize: 12,
-            fontWeight: 500,
-          }}
-          title="Add new canvas"
+          style={{ width: 28, height: 28, borderRadius: '50%', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontSize: 16, fontWeight: 700 }}
+          title="Add canvas"
         >
-          + New
+          +
         </button>
-
         <div style={{ flex: 1 }} />
-
         <button
           onClick={() => setIsCollapsed(true)}
-          style={{
-            background: 'none',
-            border: '1px solid #334155',
-            borderRadius: 6,
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: '4px 8px',
-            fontSize: 12,
-          }}
-          title="Collapse Canvas Tray"
+          style={{ width: 28, height: 28, borderRadius: '50%', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}
+          title="Collapse"
         >
           ▼
         </button>
       </div>
-
-      {/* Active Tab Content */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {activeTab && (
-          <CanvasTab
-            ref={activeCanvasRef}
-            tab={activeTab}
-            isActive={true}
-            onContentChange={handleContentChange}
-            onExtractToMain={onExtractToMain}
-          />
-        )}
-      </div>
     </div>
   );
 };
+
+export default CanvasTray;

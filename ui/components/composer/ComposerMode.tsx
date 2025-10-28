@@ -17,8 +17,9 @@ import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSenso
  import { ReferenceZone } from './ReferenceZone';
  import { enhancedDocumentStore } from '../../services/enhancedDocumentStore';
  import { PERSISTENCE_FEATURE_FLAGS } from '../../../src/persistence/index';
- import { CanvasTray } from './CanvasTray';
- import { CanvasTabData } from './CanvasTab';
+import { CanvasTray } from './CanvasTray';
+import { CanvasTabData } from './CanvasTab';
+import { JSONContent } from '@tiptap/react';
 
 interface ComposerModeProps {
   allTurns: TurnMessage[];
@@ -56,13 +57,47 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
   const [ghostIdCounter, setGhostIdCounter] = useState(0);
   const [documentsRefreshTick, setDocumentsRefreshTick] = useState(0);
   const [showNavigatorBar, setShowNavigatorBar] = useState(true);
-  const [canvasTabs, setCanvasTabs] = useState<CanvasTabData[]>([]);
+  const [canvasTabs, setCanvasTabs] = useState<CanvasTabData[]>(() => {
+    const now = Date.now();
+    return [0,1,2].map((i) => ({
+      id: `canvas-${now}-${i+1}`,
+      title: `Canvas ${i+1}`,
+      content: { type: 'doc', content: [] },
+      createdAt: now,
+      updatedAt: now,
+    }));
+  });
+  const [activeCanvasId, setActiveCanvasId] = useState<string>(
+    () => (canvasTabs[0]?.id) || ''
+  );
   const [showCanvasTray, setShowCanvasTray] = useState(true);
-  const [workspaceTabId, setWorkspaceTabId] = useState<string | null>(null);
-  const workspaceEditorRef = useRef<CanvasEditorRef>(null);
   const turnsRef = useRef<ChatTurn[]>([]);
   const isRefCollapsedRef = useRef<boolean>(false);
-  const [navFlashTick, setNavFlashTick] = useState(0);
+  const [refZoneMode, setRefZoneMode] = useState<'default' | 'canvas-focused' | 'expanded'>('default');
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const clearResetTimeout = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+  const handleReferenceHover = useCallback(() => {
+    clearResetTimeout();
+    if (!isReferenceCollapsed) setRefZoneMode('expanded');
+  }, [clearResetTimeout, isReferenceCollapsed]);
+  const handleReferenceLeave = useCallback(() => {
+    clearResetTimeout();
+    timeoutRef.current = setTimeout(() => setRefZoneMode('default'), 2000);
+  }, [clearResetTimeout]);
+  const handleCanvasFocus = useCallback(() => {
+    clearResetTimeout();
+    setRefZoneMode('canvas-focused');
+  }, [clearResetTimeout]);
+  const handleCanvasBlur = useCallback(() => {
+    clearResetTimeout();
+    timeoutRef.current = setTimeout(() => setRefZoneMode('default'), 2000);
+  }, [clearResetTimeout]);
+  useEffect(() => { try { console.log('refZoneMode:', refZoneMode); } catch {} }, [refZoneMode]);
 
   const turns = useMemo(() => convertTurnMessagesToChatTurns(allTurns), [allTurns]);
   useEffect(() => { turnsRef.current = turns; }, [turns]);
@@ -299,12 +334,21 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
   }, []);
 
   // Handle content changes
-  const handleContentChange = useCallback(() => {
+  const handleContentChange = useCallback((json: JSONContent) => {
+    setCanvasTabs(prev => prev.map(tab =>
+      tab.id === activeCanvasId ? { ...tab, content: json, updatedAt: Date.now() } : tab
+    ));
     // Debounce the dirty check
-    setTimeout(() => {
-      checkIfDirty();
-    }, 100);
-  }, [checkIfDirty]);
+    setTimeout(() => { checkIfDirty(); }, 100);
+  }, [activeCanvasId, checkIfDirty]);
+
+  // Sync main editor content when switching active canvas tab
+  useEffect(() => {
+    const active = canvasTabs.find(t => t.id === activeCanvasId);
+    if (active && editorRef.current) {
+      editorRef.current.setContent(active.content);
+    }
+  }, [activeCanvasId]);
 
   const sensors = useSensors(
     useSensor(MouseSensor, {
@@ -573,24 +617,32 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
   const handleExtractToMainFromCanvas = useCallback((content: string, provenance: ProvenanceData) => {
     if (editorRef.current) {
       editorRef.current.insertComposedContent(content, provenance);
+      const json = editorRef.current.getContent();
+      setCanvasTabs(prev => prev.map(tab =>
+        tab.id === activeCanvasId ? { ...tab, content: json, updatedAt: Date.now() } : tab
+      ));
     }
-  }, []);
+  }, [activeCanvasId]);
 
   // Handle canvas tabs change
   const handleCanvasTabsChange = useCallback((tabs: CanvasTabData[]) => {
     setCanvasTabs(tabs);
+    if (!tabs.some(t => t.id === activeCanvasId)) {
+      setActiveCanvasId(tabs[0]?.id || '');
+    }
     // TODO: Persist canvas tabs to document record
-  }, []);
+  }, [activeCanvasId]);
 
   // Handle extract to canvas from ResponseViewer
   const handleExtractToCanvas = useCallback((text: string, provenance: ProvenanceData) => {
-    // Dispatch custom event that CanvasTray can listen to
-    const event = new CustomEvent('extract-to-canvas', {
-      detail: { text, provenance },
-      bubbles: true,
-    });
-    document.dispatchEvent(event);
-  }, []);
+    if (editorRef.current) {
+      editorRef.current.insertComposedContent(text, provenance);
+      const json = editorRef.current.getContent();
+      setCanvasTabs(prev => prev.map(tab =>
+        tab.id === activeCanvasId ? { ...tab, content: json, updatedAt: Date.now() } : tab
+      ));
+    }
+  }, [activeCanvasId]);
 
   // Handle click-to-jump from composed blocks with stable listener and robust matching
   useEffect(() => {
@@ -649,7 +701,7 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
         if (isRefCollapsedRef.current) {
           setIsReferenceCollapsed(false);
         }
-        setNavFlashTick(t => t + 1);
+        // Removed flash tick; width transitions now controlled purely by refZoneMode
         try { console.log('[ComposerMode] navigation applied', { turnIndex, aiTurnId, providerIdFull }); } catch {}
       } else {
         try { console.warn('[ComposerMode] No matching turn for aiTurnId', { aiTurnId }); } catch {}
@@ -659,30 +711,7 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
     return () => document.removeEventListener('composer-block-click', handleBlockClick);
   }, []);
 
-  // Listen for open-canvas-workspace event to open a full workspace view
-  useEffect(() => {
-    const handleOpenWorkspace = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      const { tabId } = (customEvent.detail || {}) as { tabId?: string };
-      if (tabId) {
-        setWorkspaceTabId(tabId as string);
-      }
-    };
-    document.addEventListener('open-canvas-workspace', handleOpenWorkspace);
-    return () => document.removeEventListener('open-canvas-workspace', handleOpenWorkspace);
-  }, []);
-
-  // Load selected workspace tab content into the workspace editor
-  useEffect(() => {
-    if (!workspaceTabId) return;
-    const activeWorkspaceTab = canvasTabs.find(t => t.id === workspaceTabId);
-    if (!activeWorkspaceTab) return;
-    const editor = workspaceEditorRef.current as any;
-    if (editor?.setContent && activeWorkspaceTab.content) {
-      const docJson = Array.isArray(activeWorkspaceTab.content) ? { type: 'doc', content: activeWorkspaceTab.content } : activeWorkspaceTab.content;
-      editor.setContent(docJson as any);
-    }
-  }, [workspaceTabId, canvasTabs]);
+  // Removed full-screen workspace overlay behavior; canvas tray is inline only
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -745,17 +774,6 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           turns={turns}
           currentTurnIndex={currentTurnIndex}
           onSelectTurn={handleTurnSelect}
-          onPinAll={() => {
-            // Pin all segments from current turn
-            const currentTurn = turns[currentTurnIndex];
-            if (currentTurn && currentTurn.type === 'ai') {
-              const response = selectedResponse || currentTurn.responses?.[0];
-              if (response) {
-                // TODO: Implement pin all segments
-                console.log('[ComposerMode] Pin all from turn:', currentTurn.id);
-              }
-            }
-          }}
         />
       )}
 
@@ -766,24 +784,37 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
           onDragEnd={handleDragEnd}
           collisionDetection={pointerWithin}
         >
-          <div style={{ 
-            flex: 1, 
-            minHeight: 0, 
-            display: 'grid', 
-            gridTemplateColumns: showDocumentsPanel
-              ? (isReferenceCollapsed 
-                ? '40px minmax(0, 1fr) minmax(220px, 320px)'
-                : 'minmax(260px, 400px) minmax(0, 1fr) minmax(220px, 320px)')
-              : (isReferenceCollapsed 
-                ? '40px minmax(0, 1fr)'
-                : 'minmax(260px, 400px) minmax(0, 1fr)'),
-            gap: 0, 
+          <div style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'row',
+            gap: 0,
             width: '100%',
             boxSizing: 'border-box',
-            overflow: 'hidden',
-            overflowX: 'hidden'
+            overflow: 'hidden'
           }}>
-            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+            {(() => {
+              const refPct = refZoneMode === 'expanded' ? 50 : refZoneMode === 'canvas-focused' ? 30 : 40;
+              const docPx = showDocumentsPanel ? 280 : 0;
+              const refWidth = isReferenceCollapsed ? '40px' : `${refPct}%`;
+              const canvasWidth = isReferenceCollapsed
+                ? `calc(100% - ${docPx}px - 40px)`
+                : `calc(100% - ${docPx}px - ${refPct}%)`;
+              return (
+                <>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      margin: 0,
+                      flex: `0 0 ${refWidth}`,
+                      width: refWidth,
+                      transition: 'width 250ms ease'
+                    }}
+                    onMouseEnter={handleReferenceHover}
+                    onMouseLeave={handleReferenceLeave}
+                  >
               <ReferenceZone
                 turn={selectedTurn || turns[currentTurnIndex] || null}
                 response={selectedResponse}
@@ -807,18 +838,34 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
                   setSelectedResponse(resp);
                 }}
                 onExtractToCanvas={handleExtractToCanvas}
-                flashTick={navFlashTick}
               />
-            </div>
-            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                  </div>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      margin: 0,
+                      flex: `0 0 ${canvasWidth}`,
+                      width: canvasWidth,
+                      transition: 'width 250ms ease'
+                    }}
+                    onClick={handleCanvasFocus}
+                    onFocus={handleCanvasFocus}
+                    onBlur={handleCanvasBlur}
+                    tabIndex={0}
+                  >
               <CanvasEditorV2
                 ref={editorRef}
                 placeholder="Drag content here to compose..."
                 onChange={handleContentChange}
+                onInteraction={handleCanvasFocus}
               />
-            </div>
+                  </div>
+                </>
+              );
+            })()}
             {showDocumentsPanel && (
-              <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <div style={{ minWidth: 0, overflow: 'hidden', width: '280px', flex: '0 0 280px', margin: 0 }}>
                 <DocumentsHistoryPanel
                   isOpen={showDocumentsPanel}
                   onSelectDocument={handleSelectDocument}
@@ -858,157 +905,14 @@ export const ComposerMode: React.FC<ComposerModeProps> = ({
       {/* Canvas Tray */}
       {showCanvasTray && (
         <CanvasTray
-          onExtractToMain={handleExtractToMainFromCanvas}
-          initialTabs={canvasTabs}
+          tabs={canvasTabs}
+          activeTabId={activeCanvasId}
+          onActivateTab={setActiveCanvasId}
           onTabsChange={handleCanvasTabsChange}
         />
       )}
 
-      {/* Full Canvas Workspace Overlay */}
-      {workspaceTabId && (() => {
-        const activeWorkspaceTab = canvasTabs.find(t => t.id === workspaceTabId);
-        if (!activeWorkspaceTab) return null;
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              top: 64,
-              left: 0,
-              right: 0,
-              bottom: 240, // leave tray visible as thumbnails
-              background: '#0b1220',
-              borderTop: '1px solid #334155',
-              borderBottom: '1px solid #334155',
-              boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
-              zIndex: 9000,
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '8px 12px',
-                borderBottom: '1px solid #334155',
-                background: '#0f172a',
-              }}
-            >
-              <div style={{ flex: 1, color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>
-                Workspace: {activeWorkspaceTab.title}
-              </div>
-              <button
-                onClick={() => setWorkspaceTabId(null)}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #334155',
-                  background: 'transparent',
-                  color: '#94a3b8',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-                title="Close workspace view"
-              >
-                × Close
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <CanvasEditorV2
-                ref={workspaceEditorRef}
-                placeholder={`Workspace: ${activeWorkspaceTab.title}`}
-                onChange={() => {
-                  const json: any = workspaceEditorRef.current?.getContent();
-                  setCanvasTabs(prev => prev.map(t => (
-                    t.id === activeWorkspaceTab.id ? { ...t, content: json, updatedAt: Date.now() } : t
-                  )));
-                }}
-              />
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '8px 12px',
-                borderTop: '1px solid #334155',
-                background: '#0f172a',
-              }}
-            >
-              <button
-                onClick={() => {
-                  if (workspaceEditorRef.current) {
-                    const json: any = workspaceEditorRef.current.getContent();
-                    const extractions: { text: string; provenance: ProvenanceData }[] = [];
-                    let plainText = '';
-
-                    const extractText = (node: any): string => {
-                      if (!node) return '';
-                      if (typeof node.text === 'string') return node.text;
-                      const children = Array.isArray(node.content) ? node.content : [];
-                      return children.map(extractText).join('');
-                    };
-
-                    const walk = (node: any, inside: boolean = false) => {
-                      if (!node) return;
-                      const isComposed = node.type === 'composedContent' && node.attrs?.provenance;
-                      if (isComposed) {
-                        const text = extractText(node);
-                        if (text.trim()) {
-                          extractions.push({ text, provenance: node.attrs.provenance as ProvenanceData });
-                        }
-                      } else if (!inside) {
-                        plainText += extractText(node);
-                      }
-
-                      const children = Array.isArray(node.content) ? node.content : [];
-                      const nextInside = inside || !!isComposed;
-                      for (const child of children) walk(child, nextInside);
-                    };
-
-                    walk(json);
-
-                    for (const item of extractions) {
-                      handleExtractToMainFromCanvas(item.text, item.provenance);
-                    }
-
-                    if (plainText.trim()) {
-                      const provenance: ProvenanceData = {
-                        sessionId: 'canvas',
-                        aiTurnId: activeWorkspaceTab.id,
-                        providerId: 'canvas',
-                        responseType: 'batch',
-                        responseIndex: 0,
-                        timestamp: Date.now(),
-                        granularity: 'full',
-                        sourceText: plainText,
-                      };
-                      handleExtractToMainFromCanvas(plainText, provenance);
-                    }
-                  }
-                }}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #334155',
-                  background: '#1e293b',
-                  color: '#e2e8f0',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-                title="Extract workspace to main canvas"
-              >
-                ↑ Extract to Main
-              </button>
-              <div style={{ flex: 1 }} />
-              <div style={{ fontSize: 11, color: '#64748b' }}>
-                {new Date(activeWorkspaceTab.updatedAt || Date.now()).toLocaleTimeString()}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Full Canvas Workspace Overlay removed; inline CanvasTray is used */}
 
       <SaveDialog
         isOpen={showSaveDialog}

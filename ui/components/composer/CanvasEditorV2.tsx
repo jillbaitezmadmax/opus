@@ -25,6 +25,7 @@ interface CanvasEditorProps {
   onChange?: (content: JSONContent) => void;
   onDrop?: (data: any, position: number) => void;
   className?: string;
+  onInteraction?: () => void;
 }
 
 export const CanvasEditorV2 = React.forwardRef<CanvasEditorRef, CanvasEditorProps>((props, ref) => {
@@ -45,6 +46,7 @@ export const CanvasEditorV2 = React.forwardRef<CanvasEditorRef, CanvasEditorProp
     content: props.initialContent ?? content ?? initialText ?? '',
     onUpdate: ({ editor }) => {
       props.onChange?.(editor.getJSON());
+      props.onInteraction?.();
     },
     editorProps: {
       attributes: {
@@ -76,6 +78,18 @@ export const CanvasEditorV2 = React.forwardRef<CanvasEditorRef, CanvasEditorProp
     }
   }, [editor, props.initialContent]);
 
+  useEffect(() => {
+    if (!editor) return;
+    const notify = () => props.onInteraction?.();
+    editor.on('focus', notify);
+    editor.on('selectionUpdate', notify);
+    // ensure typing is already covered by onUpdate
+    return () => {
+      editor.off('focus', notify);
+      editor.off('selectionUpdate', notify);
+    };
+  }, [editor, props.onInteraction]);
+
   const { isOver, setNodeRef } = useDroppable({ id: droppableId, data: { type: 'canvas' } });
 
   const overlay = useMemo(() => (
@@ -94,19 +108,26 @@ export const CanvasEditorV2 = React.forwardRef<CanvasEditorRef, CanvasEditorProp
         position: 'relative',
         borderRadius: '8px',
         padding: '8px',
+        height: '100%',
         minHeight: '160px',
         background: 'rgba(2, 6, 23, 0.6)',
-        border: isOver ? '2px dashed rgba(99, 102, 241, 0.7)' : '1px solid rgba(148, 163, 184, 0.15)'
+        border: isOver ? '2px dashed rgba(99, 102, 241, 0.7)' : '1px solid rgba(148, 163, 184, 0.15)',
+        display: 'flex',
+        flexDirection: 'column'
       }}
     >
       {overlay}
-      <EditorContent editor={editor} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <EditorContent editor={editor} />
+      </div>
       {/* ProseMirror white-space guidance */}
       <style>
         {`
           .canvas-editor-container .ProseMirror {
             white-space: pre-wrap;
             word-wrap: break-word;
+            height: 100%;
+            min-height: 140px;
           }
           .canvas-editor-container .is-editor-empty::before {
             content: attr(data-placeholder);

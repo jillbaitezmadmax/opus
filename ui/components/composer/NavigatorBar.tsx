@@ -6,14 +6,12 @@ interface NavigatorBarProps {
   turns: ChatTurn[];
   currentTurnIndex: number;
   onSelectTurn: (index: number) => void;
-  onPinAll?: () => void;
 }
 
 export const NavigatorBar: React.FC<NavigatorBarProps> = ({
   turns,
   currentTurnIndex,
   onSelectTurn,
-  onPinAll,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showLeftFade, setShowLeftFade] = useState(false);
@@ -78,58 +76,25 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
       style={{
         position: 'relative',
         width: '100%',
-        height: '60px',
+        height: '24px',
         background: '#0f172a',
         borderBottom: '1px solid #334155',
         display: 'flex',
         alignItems: 'center',
-        padding: '0 12px',
-        gap: '12px',
+        padding: '0 8px',
+        gap: '6px',
       }}
     >
-      {/* Pin All Button */}
-      {onPinAll && (
-        <button
-          onClick={onPinAll}
-          style={{
-            flexShrink: 0,
-            padding: '6px 12px',
-            background: '#334155',
-            border: '1px solid #475569',
-            borderRadius: '6px',
-            color: '#94a3b8',
-            fontSize: '12px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#475569';
-            e.currentTarget.style.color = '#e2e8f0';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#334155';
-            e.currentTarget.style.color = '#94a3b8';
-          }}
-          title="Pin all segments from current turn"
-        >
-          <span style={{ fontSize: '14px' }}>📌</span>
-          Pin All
-        </button>
-      )}
 
       {/* Left Fade Indicator */}
       {showLeftFade && (
         <div
           style={{
             position: 'absolute',
-            left: onPinAll ? '100px' : '12px',
+            left: '8px',
             top: 0,
             bottom: 0,
-            width: '40px',
+            width: '24px',
             background: 'linear-gradient(to right, #0f172a, transparent)',
             pointerEvents: 'none',
             zIndex: 1,
@@ -143,11 +108,11 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
         style={{
           flex: 1,
           display: 'flex',
-          gap: '8px',
+          gap: '4px',
           overflowX: 'auto',
           overflowY: 'hidden',
           scrollBehavior: 'smooth',
-          padding: '8px 0',
+          padding: '4px 0',
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
         }}
@@ -166,20 +131,20 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
               onClick={() => onSelectTurn(index)}
               style={{
                 flexShrink: 0,
-                minWidth: '80px',
-                padding: '8px 12px',
+                minWidth: '48px',
+                padding: '2px 6px',
                 background: isActive ? '#1e293b' : '#0f172a',
                 border: '1px solid',
                 borderColor: isActive ? '#8b5cf6' : '#334155',
-                borderRadius: '8px',
+                borderRadius: '6px',
                 color: isActive ? '#e2e8f0' : '#94a3b8',
-                fontSize: '12px',
+                fontSize: '10px',
                 fontWeight: isActive ? 600 : 500,
                 cursor: 'pointer',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'flex-start',
-                gap: '4px',
+                gap: '2px',
                 transition: 'all 0.2s ease',
                 position: 'relative',
                 overflow: 'hidden',
@@ -199,13 +164,13 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
               title={preview}
             >
               {/* Provider Color Indicators */}
-              <div style={{ display: 'flex', gap: '2px', marginBottom: '2px' }}>
+              <div style={{ display: 'flex', gap: '2px', marginBottom: '1px' }}>
                 {colors.map((color, i) => (
                   <div
                     key={i}
                     style={{
-                      width: '6px',
-                      height: '6px',
+                      width: '4px',
+                      height: '4px',
                       borderRadius: '50%',
                       background: color,
                     }}
@@ -214,7 +179,7 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
               </div>
 
               {/* Turn Label */}
-              <div style={{ fontSize: '13px', fontWeight: 600 }}>{label}</div>
+              <div style={{ fontSize: '10px', fontWeight: 600 }}>{label}</div>
 
               {/* Active Indicator */}
               {isActive && (
@@ -239,10 +204,10 @@ export const NavigatorBar: React.FC<NavigatorBarProps> = ({
         <div
           style={{
             position: 'absolute',
-            right: '12px',
+            right: '8px',
             top: 0,
             bottom: 0,
-            width: '40px',
+            width: '24px',
             background: 'linear-gradient(to left, #0f172a, transparent)',
             pointerEvents: 'none',
             zIndex: 1,
