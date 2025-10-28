@@ -1,18 +1,86 @@
 /**
  * HTOS Offscreen Bootstrap - Multi-purpose Utility Host
- *
- * This script runs inside the offscreen.html document. Its primary role for the
- * Arkose solver is to manage the oi.html iframe. It also hosts a UtilsController
- * that can be called by the service worker for tasks requiring localStorage access.
- *
- * This file is a pure module; it is initialized by offscreen-entry.js.
+ * NOW WITH: Active SW keepalive pinging
  */
 
+import { BusController } from './BusController.js';
+
 // =============================================================================
-// DEPENDENCIES
+// SERVICE WORKER KEEPALIVE CONTROLLER
 // =============================================================================
 
-import { BusController } from './BusController.js';
+const KeepaliveController = {
+  pingTimer: null,
+  PING_INTERVAL: 20000, // Ping every 20 seconds (well below 30s threshold)
+  
+  async init() {
+    console.log('[OffscreenBootstrap] Initializing KeepaliveController...');
+    
+    // Start immediate ping cycle
+    this.startPinging();
+    
+    // Listen for keepalive requests from SW
+    if (window.bus) {
+      window.bus.on('htos.keepalive', this.handleKeepaliveRequest.bind(this));
+    }
+    
+    // Listen for runtime messages as fallback
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message.type === 'htos.keepalive') {
+        this.handleKeepaliveRequest(message);
+        return true;
+      }
+    });
+  },
+  
+  startPinging() {
+    if (this.pingTimer) return;
+    
+    const doPing = async () => {
+      try {
+        // Ping service worker via runtime message
+        await chrome.runtime.sendMessage({ 
+          type: 'htos.offscreen.ping',
+          timestamp: Date.now() 
+        });
+        
+        console.log('[Keepalive] SW ping sent');
+      } catch (e) {
+        // SW might be restarting, this is fine
+        console.log('[Keepalive] SW ping failed (SW may be restarting)');
+      }
+      
+      // Schedule next ping
+      this.pingTimer = setTimeout(doPing, this.PING_INTERVAL);
+    };
+    
+    // Start immediately
+    doPing();
+  },
+  
+  stopPinging() {
+    if (this.pingTimer) {
+      clearTimeout(this.pingTimer);
+      this.pingTimer = null;
+    }
+  },
+  
+  handleKeepaliveRequest(message) {
+    // SW is asking us to confirm we're alive
+    // Send a pong back
+    try {
+      chrome.runtime.sendMessage({ 
+        type: 'htos.offscreen.pong',
+        timestamp: Date.now(),
+        originalTimestamp: message?.timestamp 
+      });
+    } catch (e) {
+      console.warn('[Keepalive] Failed to send pong:', e);
+    }
+    
+    return { success: true, timestamp: Date.now() };
+  }
+};
 
 // =============================================================================
 // IFRAME LIFECYCLE CONTROLLER (Essential for Arkose Solver)
@@ -22,12 +90,10 @@ const IframeController = {
   async init() {
     console.log('[OffscreenBootstrap] Initializing IframeController...');
     
-    // Load the oi page from localhost for development (web origin like reference)
     this._src = chrome.runtime.getURL('oi.html');
     this._iframe = null;
     this._pingInterval = null;
     
-    // Create the iframe and start the stability management loop
     this._createIframe();
     this._manageIframeStability();
     
@@ -39,18 +105,14 @@ const IframeController = {
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = this._src;
-    // Pass the extension oi.js URL to the oi host via window.name (like reference)
+    
     try {
       iframe.name = `offscreen-iframe | ${chrome.runtime.getURL('oi.js')}`;
     } catch (_) {}
 
-    // Append iframe to the document and register it immediately with the bus.
-    // Simpler, robust flow: do not wait for a custom "oi.initialized" postMessage
-    // (the iframe's own bus handler startup.oiReady will respond to polls when ready).
     document.body.appendChild(iframe);
     this._iframe = iframe;
 
-    // Register this iframe with the bus so it knows where to forward messages
     if (window.bus && typeof window.bus.setIframe === 'function') {
       try {
         window.bus.setIframe(iframe);
@@ -64,8 +126,6 @@ const IframeController = {
   },
 
   _manageIframeStability() {
-    // This is the self-healing mechanism. It periodically checks if the iframe
-    // is alive and restarts it if it becomes unresponsive.
     this._pingInterval = setInterval(async () => {
       const isResponsive = await this._pingIframe();
       if (!isResponsive) {
@@ -78,8 +138,6 @@ const IframeController = {
   },
 
   async _pingIframe() {
-    // Align with reference implementation: rely on the bus poll for startup.oiReady
-    // and treat any non-response within 5s as not-ready.
     const timeoutMs = 5000;
     try {
       if (!window.bus || typeof window.bus.poll !== 'function') {
@@ -122,7 +180,6 @@ const UtilsController = {
   async init() {
     console.log('[OffscreenBootstrap] Initializing UtilsController...');
     if (window.bus) {
-      // Listen for requests from the service worker and proxy them to localStorage
       window.bus.on('utils.ls.get', this._localStorageGet.bind(this));
       window.bus.on('utils.ls.set', this._localStorageSet.bind(this));
       window.bus.on('utils.ls.has', this._localStorageHas.bind(this));
@@ -175,7 +232,6 @@ const UtilsController = {
 // =============================================================================
 
 const OffscreenBootstrap = {
-  // Bus discovery shim - probes multiple global names for tolerant discovery
   _discoverBus() {
     const candidates = [
       { name: 'BusController', ref: window.BusController },
@@ -199,26 +255,27 @@ const OffscreenBootstrap = {
     console.log('[OffscreenBootstrap] Starting initialization inside offscreen.html...');
     
     try {
-      // 1. Initialize Bus Controller first with discovery.
+      // 1. Initialize Bus Controller first
       console.log('[OffscreenBootstrap] Initializing BusController...');
       const busController = this._discoverBus();
       await busController.init();
       window.bus = busController;
       console.log('[OffscreenBootstrap] BusController initialized and available as window.bus');
       
-      // 2. Initialize all necessary controllers.
+      // 2. Initialize ALL controllers (including keepalive)
       console.log('[OffscreenBootstrap] Initializing specialized controllers...');
       await Promise.all([
+        KeepaliveController.init(),  // NEW: Active SW pinging
         IframeController.init(),
         UtilsController.init()
       ]);
       console.log('[OffscreenBootstrap] All specialized controllers initialized successfully');
       
-      console.log('[OffscreenBootstrap] Initialization completed successfully.');
+      console.log('[OffscreenBootstrap] âœ… Initialization completed successfully.');
       
     } catch (error) {
       console.error('[OffscreenBootstrap] Initialization failed:', error);
-      throw error; // Re-throw the error for the entry point's catch block
+      throw error;
     }
   }
 };
@@ -227,5 +284,4 @@ const OffscreenBootstrap = {
 // EXPORT
 // =============================================================================
 
-// Export the main bootstrap object so offscreen-entry.js can import and run it.
 export { OffscreenBootstrap };
